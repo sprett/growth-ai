@@ -1,6 +1,7 @@
 "use server";
 
 import { isGithubConnected, toPublicConnection } from "@/lib/onboarding";
+import { getOrgId } from "@/lib/org";
 import { verifyPosthogAccess } from "@/lib/posthog/customer";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
@@ -11,7 +12,8 @@ async function requireUser() {
   if (error || !data.user) {
     throw new Error("Not signed in");
   }
-  return { supabase, userId: data.user.id };
+  const orgId = await getOrgId(supabase, data.user);
+  return { supabase, orgId };
 }
 
 export async function saveGithubInstallation(installationId: string) {
@@ -20,35 +22,11 @@ export async function saveGithubInstallation(installationId: string) {
     return { error: "Installation ID should be a number from the GitHub App URL." };
   }
 
-  const { supabase, userId } = await requireUser();
+  const { supabase, orgId } = await requireUser();
   const { error } = await supabase.from("connections").upsert(
     {
-      org_id: userId,
+      org_id: orgId,
       github_installation_id: id,
-    },
-    { onConflict: "org_id" },
-  );
-
-  if (error) {
-    return { error: error.message };
-  }
-
-  revalidatePath("/onboarding");
-  revalidatePath("/");
-  return { ok: true as const };
-}
-
-export async function saveGithubRepo(formData: FormData) {
-  const repo = String(formData.get("github_repo_full_name") ?? "").trim();
-  if (!repo.includes("/")) {
-    return { error: "Use owner/repo, like acme/checkout." };
-  }
-
-  const { supabase, userId } = await requireUser();
-  const { error } = await supabase.from("connections").upsert(
-    {
-      org_id: userId,
-      github_repo_full_name: repo,
     },
     { onConflict: "org_id" },
   );
@@ -71,13 +49,13 @@ export async function savePosthogConnection(formData: FormData) {
     return { error: "API key, project ID, and host are required." };
   }
 
-  const { supabase, userId } = await requireUser();
+  const { supabase, orgId } = await requireUser();
   const { data: existing } = await supabase
     .from("connections")
     .select(
       "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_id, posthog_host",
     )
-    .eq("org_id", userId)
+    .eq("org_id", orgId)
     .maybeSingle();
 
   if (!isGithubConnected(toPublicConnection(existing))) {
@@ -91,7 +69,7 @@ export async function savePosthogConnection(formData: FormData) {
 
   const { error } = await supabase.from("connections").upsert(
     {
-      org_id: userId,
+      org_id: orgId,
       github_installation_id: existing?.github_installation_id ?? null,
       github_repo_full_name: existing?.github_repo_full_name ?? null,
       posthog_api_key: apiKey,

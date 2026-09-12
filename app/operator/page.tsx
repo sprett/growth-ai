@@ -1,3 +1,4 @@
+import { getOrgId } from "@/lib/org";
 import { createServerSupabase } from "@/lib/supabase/server";
 import {
   Activity,
@@ -40,10 +41,12 @@ export default async function PipelinePage() {
     redirect("/login");
   }
 
+  const orgId = await getOrgId(supabase, userData.user);
+
   const { data, error } = await supabase
     .from("experiments")
     .select("id, name, prompt_text, status, cycle_number")
-    .eq("org_id", userData.user.id)
+    .eq("org_id", orgId)
     .order("created_at", { ascending: false });
 
   const experiments = (data ?? []) as ExperimentRow[];

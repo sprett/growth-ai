@@ -4,7 +4,13 @@ import { GithubMark } from "@/components/brand-icon";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { useState } from "react";
 
-export function LoginForm({ authError }: { authError?: boolean }) {
+export function LoginForm({
+  authError,
+  next,
+}: {
+  authError?: boolean;
+  next?: string;
+}) {
   const [error, setError] = useState<string | null>(
     authError
       ? "GitHub sign-in failed. Check the provider is enabled in Supabase."
@@ -16,10 +22,14 @@ export function LoginForm({ authError }: { authError?: boolean }) {
     setError(null);
     setPending(true);
     const supabase = createBrowserSupabase();
+    const callbackUrl = new URL("/auth/callback", window.location.origin);
+    if (next) {
+      callbackUrl.searchParams.set("next", next);
+    }
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "github",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: callbackUrl.toString(),
         scopes: "read:user user:email",
       },
     });

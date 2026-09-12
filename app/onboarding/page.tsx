@@ -5,6 +5,7 @@ import {
   toPublicConnection,
   type ConnectionRow,
 } from "@/lib/onboarding";
+import { getOrgId } from "@/lib/org";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
@@ -19,12 +20,14 @@ export default async function OnboardingPage({
     redirect("/login");
   }
 
+  const orgId = await getOrgId(supabase, userData.user);
+
   const params = await searchParams;
   const installationId = params.installation_id?.trim() ?? "";
   if (/^\d+$/.test(installationId)) {
     await supabase.from("connections").upsert(
       {
-        org_id: userData.user.id,
+        org_id: orgId,
         github_installation_id: installationId,
       },
       { onConflict: "org_id" },
@@ -37,7 +40,7 @@ export default async function OnboardingPage({
     .select(
       "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_id, posthog_host",
     )
-    .eq("org_id", userData.user.id)
+    .eq("org_id", orgId)
     .maybeSingle();
 
   const connection = toPublicConnection(data as ConnectionRow | null);

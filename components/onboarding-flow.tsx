@@ -2,7 +2,6 @@
 
 import {
   saveGithubInstallation,
-  saveGithubRepo,
   savePosthogConnection,
 } from "@/app/actions/onboarding";
 import { GithubMark, PosthogMark } from "@/components/brand-icon";
@@ -78,24 +77,13 @@ export function OnboardingFlow({
     router.refresh();
   }
 
-  async function onSaveRepo(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setGithubPending(true);
-    setGithubError(null);
-    const result = await saveGithubRepo(new FormData(event.currentTarget));
-    setGithubPending(false);
-    if (result.error) {
-      setGithubError(result.error);
-      return;
-    }
-    router.refresh();
-  }
-
   async function onPosthog(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPosthogPending(true);
     setPosthogError(null);
-    const result = await savePosthogConnection(new FormData(event.currentTarget));
+    const result = await savePosthogConnection(
+      new FormData(event.currentTarget),
+    );
     setPosthogPending(false);
     if (result.error) {
       setPosthogError(result.error);
@@ -122,7 +110,10 @@ export function OnboardingFlow({
               </p>
             </div>
           </div>
-          <StatusPill done={githubDone} label={githubDone ? "Installed" : "Needed"} />
+          <StatusPill
+            done={githubDone}
+            label={githubDone ? "Installed" : "Needed"}
+          />
         </div>
 
         {installUrl ? (
@@ -136,66 +127,15 @@ export function OnboardingFlow({
         ) : (
           <p className="m-0 border border-dashed border-rule bg-paper px-3 py-3 font-mono text-xs leading-relaxed text-mute">
             Set <span className="text-ink">NEXT_PUBLIC_GITHUB_APP_SLUG</span>{" "}
-            once the app exists. Until then, paste the installation ID after
-            you create it.
+            once the app exists. Until then, paste the installation ID after you
+            create it.
           </p>
         )}
 
-        <form onSubmit={onSaveRepo} className="mt-5 flex flex-col gap-2">
-          <label className="flex flex-col gap-1.5">
-            <span className="font-mono text-[11px] tracking-[0.16em] text-mute uppercase">
-              Repo to open PRs on
-            </span>
-            <div className="flex gap-2">
-              <input
-                name="github_repo_full_name"
-                placeholder="acme/checkout"
-                defaultValue={connection?.github_repo_full_name ?? ""}
-                className="min-w-0 flex-1 border border-rule bg-paper px-3 py-2.5 outline-none focus:shadow-cta"
-              />
-              <button
-                type="submit"
-                disabled={githubPending}
-                className="border border-rule px-3 py-2 font-mono text-[11px] tracking-wide uppercase disabled:opacity-60"
-              >
-                Save
-              </button>
-            </div>
-          </label>
-        </form>
-
-        <button
-          type="button"
-          className="mt-4 inline-flex items-center gap-1 font-mono text-[11px] text-mute"
-          onClick={() => setShowInstallId((open) => !open)}
-        >
-          <ChevronDown
-            className={cn("size-3.5 transition", showInstallId && "rotate-180")}
-            strokeWidth={1.75}
-          />
-          Already installed? Paste the ID
-        </button>
-
-        {showInstallId ? (
-          <form onSubmit={onPasteInstall} className="mt-3 flex gap-2">
-            <input
-              name="github_installation_id"
-              placeholder="12345678"
-              defaultValue={connection?.github_installation_id ?? ""}
-              className="min-w-0 flex-1 border border-rule bg-paper px-3 py-2.5 outline-none focus:shadow-cta"
-            />
-            <button
-              type="submit"
-              disabled={githubPending}
-              className="border border-rule px-3 py-2 font-mono text-[11px] tracking-wide uppercase disabled:opacity-60"
-            >
-              {githubPending ? "Saving" : "Save"}
-            </button>
-          </form>
-        ) : null}
-
         {githubError ? (
-          <p className="mt-3 mb-0 font-mono text-xs text-[#C23A2B]">{githubError}</p>
+          <p className="mt-3 mb-0 font-mono text-xs text-[#C23A2B]">
+            {githubError}
+          </p>
         ) : null}
       </Ticket>
 
@@ -212,13 +152,16 @@ export function OnboardingFlow({
               </p>
             </div>
           </div>
-          <StatusPill done={posthogDone} label={posthogDone ? "Connected" : "Needed"} />
+          <StatusPill
+            done={posthogDone}
+            label={posthogDone ? "Connected" : "Needed"}
+          />
         </div>
 
         <p className="m-0 mb-4 text-[15px] leading-relaxed">
-          Create a <strong>personal API key</strong> with just these scopes.
-          We create flags for experiments, then read counts grouped by variant
-          — never distinct ids, recordings, or people.
+          Create a <strong>personal API key</strong> with just these scopes. We
+          create flags for experiments, then read counts grouped by variant —
+          never distinct ids, recordings, or people.
         </p>
 
         <ul className="m-0 mb-4 flex list-none flex-wrap gap-2 p-0">
@@ -297,7 +240,9 @@ export function OnboardingFlow({
             </label>
           </div>
           {posthogError ? (
-            <p className="m-0 font-mono text-xs text-[#C23A2B]">{posthogError}</p>
+            <p className="m-0 font-mono text-xs text-[#C23A2B]">
+              {posthogError}
+            </p>
           ) : null}
           <button
             type="submit"

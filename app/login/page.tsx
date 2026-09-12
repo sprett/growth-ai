@@ -3,7 +3,7 @@ import { LoginForm } from "@/components/login-form";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
   const params = await searchParams;
 
@@ -23,7 +23,7 @@ export default async function LoginPage({
           nosier.
         </p>
       </header>
-      <LoginForm authError={params.error === "auth"} />
+      <LoginForm authError={params.error === "auth"} next={params.next} />
     </div>
   );
 }

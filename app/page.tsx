@@ -1,10 +1,12 @@
 import { GithubMark, PosthogMark } from "@/components/brand-icon";
 import { StudioHeader, Ticket } from "@/components/studio-header";
+import { TeamCard } from "@/components/team-card";
 import {
   isOnboarded,
   toPublicConnection,
   type ConnectionRow,
 } from "@/lib/onboarding";
+import { getOrgId, listTeammates } from "@/lib/org";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { MessageSquareText } from "lucide-react";
 import Link from "next/link";
@@ -17,18 +19,22 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
+  const orgId = await getOrgId(supabase, userData.user);
+
   const { data } = await supabase
     .from("connections")
     .select(
       "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_id, posthog_host",
     )
-    .eq("org_id", userData.user.id)
+    .eq("org_id", orgId)
     .maybeSingle();
 
   const connection = toPublicConnection(data as ConnectionRow | null);
   if (!isOnboarded(connection)) {
     redirect("/onboarding");
   }
+
+  const teammates = await listTeammates(supabase);
 
   const repo = connection?.github_repo_full_name ?? "repo pending";
   const project = connection?.posthog_project_id ?? "";
@@ -72,6 +78,12 @@ export default async function DashboardPage() {
           </div>
         </Ticket>
       </div>
+
+      <TeamCard
+        teammates={teammates}
+        currentUserId={userData.user.id}
+        className="mb-4"
+      />
 
       <Ticket className="rise-delay-2 flex flex-col items-start gap-4 p-6 sm:p-8">
         <span className="grid size-11 place-items-center border border-rule">

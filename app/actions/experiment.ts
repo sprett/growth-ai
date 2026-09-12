@@ -1,5 +1,6 @@
 "use server";
 
+import { getOrgId } from "@/lib/org";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
@@ -20,10 +21,12 @@ export async function startExperiment(formData: FormData) {
   const name =
     prompt.length > 72 ? `${prompt.slice(0, 69).trimEnd()}…` : prompt;
 
+  const orgId = await getOrgId(supabase, data.user);
+
   const { data: experiment, error } = await supabase
     .from("experiments")
     .insert({
-      org_id: data.user.id,
+      org_id: orgId,
       name,
       prompt_text: prompt,
       status: "parsing",
