@@ -1,8 +1,9 @@
 "use client";
 
-import { CTA_COLOR, CTA_COPY } from "@/lib/experiment";
+import { CTA_COLOR, CTA_COPY, CTA_PLACEMENT } from "@/lib/experiment";
 import { cn } from "@/lib/utils";
 import { ArrowRight } from "lucide-react";
+import posthog from "posthog-js";
 
 export function CtaButton() {
   return (
@@ -18,7 +19,14 @@ export function CtaButton() {
         "active:translate-x-0.5 active:translate-y-0.5 active:shadow-cta-active",
       )}
       onClick={() => {
-        // PostHog capture lands here after the wizard
+        if (
+          process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN &&
+          process.env.NEXT_PUBLIC_POSTHOG_HOST
+        ) {
+          posthog.capture("waitlist_cta_clicked", {
+            cta_placement: CTA_PLACEMENT,
+          });
+        }
       }}
     >
       {CTA_COPY}
