@@ -1,30 +1,9 @@
 import { getOrgId } from "@/lib/org";
+import { STEP_META, STEP_ORDER } from "@/lib/pipeline/step-meta";
 import { createServerSupabase } from "@/lib/supabase/server";
-import {
-  Activity,
-  ArrowLeft,
-  BarChart3,
-  BookOpen,
-  Flag,
-  GitPullRequest,
-  MessageSquareText,
-  Sparkles,
-  SquarePen,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-
-const steps: { label: string; icon: LucideIcon }[] = [
-  { label: "Parse request", icon: MessageSquareText },
-  { label: "Generate diff", icon: SquarePen },
-  { label: "Open PR", icon: GitPullRequest },
-  { label: "Create flag", icon: Flag },
-  { label: "Simulate traffic", icon: Activity },
-  { label: "Analyze results", icon: BarChart3 },
-  { label: "Update playbook", icon: BookOpen },
-  { label: "Synthesize next hypothesis", icon: Sparkles },
-];
 
 type ExperimentRow = {
   id: string;
@@ -61,7 +40,7 @@ export default async function PipelinePage() {
           Steps
         </h1>
         <p className="m-0 text-lg leading-relaxed">
-          Experiments for your account. The loop still runs as stubs.
+          Experiments for your account.
         </p>
       </header>
 
@@ -88,19 +67,21 @@ export default async function PipelinePage() {
       )}
 
       <ol className="m-0 list-none border-t border-ink/20 p-0">
-        {steps.map((step, index) => (
-          <li
-            key={step.label}
-            className="grid grid-cols-[48px_auto_1fr_auto] items-center gap-3 border-b border-ink/15 py-3"
-          >
-            <span className="font-mono text-xs text-mute">
-              {String(index + 1).padStart(2, "0")}
-            </span>
-            <step.icon className="size-4 text-mute" strokeWidth={1.75} />
-            <span>{step.label}</span>
-            <span className="font-mono text-xs text-mute">stub</span>
-          </li>
-        ))}
+        {STEP_ORDER.map((stepName, index) => {
+          const meta = STEP_META[stepName];
+          return (
+            <li
+              key={stepName}
+              className="grid grid-cols-[48px_auto_1fr] items-center gap-3 border-b border-ink/15 py-3"
+            >
+              <span className="font-mono text-xs text-mute">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <meta.icon className="size-4 text-mute" strokeWidth={1.75} />
+              <span>{meta.label}</span>
+            </li>
+          );
+        })}
       </ol>
 
       <Link href="/" className="inline-flex items-center gap-1.5 font-mono text-[11px] text-mute">
