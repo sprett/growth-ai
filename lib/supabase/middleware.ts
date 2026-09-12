@@ -34,7 +34,8 @@ export async function updateSession(request: NextRequest) {
   const isPublic =
     pathname.startsWith("/login") ||
     pathname.startsWith("/auth") ||
-    pathname.startsWith("/invite");
+    pathname.startsWith("/invite") ||
+    pathname.startsWith("/api/pipeline"); // uses service-role key, no user auth needed
 
   if (!user && !isPublic) {
     const redirect = request.nextUrl.clone();

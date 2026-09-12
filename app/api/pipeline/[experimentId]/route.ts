@@ -33,6 +33,8 @@ export async function POST(
 
   const orgId = experiment.org_id as string;
 
+  let activeHypothesis = experiment.active_hypothesis as Record<string, string> | null;
+
   for (const step of STEPS) {
     await supabase
       .from("experiments")
@@ -42,8 +44,18 @@ export async function POST(
     const result = await runStep(step, orgId, experimentId, {
       promptText: experiment.prompt_text as string,
       cycleNumber: (experiment.cycle_number as number) ?? 1,
-      activeHypothesis: experiment.active_hypothesis as Record<string, string> | null,
+      activeHypothesis,
     });
+
+    // Re-read hypothesis after parse_request so later steps see the fresh value
+    if (step === "parse_request" && result.ok) {
+      const { data: fresh } = await supabase
+        .from("experiments")
+        .select("active_hypothesis")
+        .eq("id", experimentId)
+        .single();
+      activeHypothesis = (fresh?.active_hypothesis as Record<string, string>) ?? activeHypothesis;
+    }
 
     if (!result.ok) {
       await supabase

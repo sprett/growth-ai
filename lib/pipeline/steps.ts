@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { App } from "@octokit/app";
 import {
   assertGithubTarget,
   assertPosthogTarget,
@@ -6,6 +7,12 @@ import {
 } from "@/lib/pipeline/connection";
 import { createAdminSupabase } from "@/lib/supabase-admin";
 import type { PipelineContext, StepResult } from "@/lib/pipeline/types";
+
+async function getInstallationOctokit(installationId: string) {
+  const privateKey = (process.env.GITHUB_APP_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
+  const app = new App({ appId: process.env.GITHUB_APP_ID ?? "", privateKey });
+  return app.getInstallationOctokit(Number(installationId));
+}
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -28,9 +35,10 @@ export async function parseRequest(
 
   const text = message.content[0].type === "text" ? message.content[0].text.trim() : "";
 
+  const jsonMatchParse = text.match(/\{[\s\S]*\}/);
   let hypothesis: Record<string, string>;
   try {
-    hypothesis = JSON.parse(text);
+    hypothesis = JSON.parse(jsonMatchParse?.[0] ?? text);
   } catch {
     return {
       step: "parse_request",
@@ -61,37 +69,211 @@ export async function parseRequest(
 
 export async function generateDiff(
   orgId: string,
-  _experimentId: string,
+  experimentId: string,
   context: PipelineContext,
 ): Promise<StepResult> {
   const connection = await getActiveConnection(orgId);
-  const repo = assertGithubTarget(connection);
-  const { activeHypothesis } = context;
+  const repoFull = assertGithubTarget(connection);
+  const { activeHypothesis, cycleNumber } = context;
 
   if (!activeHypothesis) {
     return { step: "generate_diff", ok: false, message: "No active_hypothesis — run parse_request first." };
   }
 
-  // TODO: call Claude to generate the actual diff against the fake-customer repo
+  if (!connection.github_installation_id) {
+    return { step: "generate_diff", ok: false, message: "No github_installation_id in connections." };
+  }
+
+  const [owner, repo] = repoFull.split("/");
+  const octokit = await getInstallationOctokit(connection.github_installation_id);
+
+  // 1. Get file tree
+  const { data: tree } = await octokit.request("GET /repos/{owner}/{repo}/git/trees/{tree_sha}", {
+    owner, repo, tree_sha: "HEAD", recursive: "1",
+  });
+  const filePaths = tree.tree
+    .filter((f) => f.type === "blob" && /\.(tsx?|jsx?|css|html)$/.test(f.path ?? ""))
+    .map((f) => f.path as string)
+    .slice(0, 30); // cap to avoid huge context
+
+  // 2. Read up to 5 most likely relevant files — ask Claude which ones matter
+  const pickRes = await anthropic.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 256,
+    messages: [{
+      role: "user",
+      content: `Given this UI experiment hypothesis: ${JSON.stringify(activeHypothesis)}\n\nThese are the source files in the repo:\n${filePaths.join("\n")}\n\nWhich 1-3 files are most likely to contain the UI element that needs to change? Reply with only a JSON array of file paths, no markdown.`,
+    }],
+  });
+
+  const pickText = pickRes.content[0].type === "text" ? pickRes.content[0].text.trim() : "[]";
+  let targetFiles: string[];
+  try {
+    targetFiles = JSON.parse(pickText);
+  } catch {
+    targetFiles = [filePaths[0]];
+  }
+
+  // 3. Read those files
+  const fileContents: Record<string, { content: string; sha: string }> = {};
+  for (const path of targetFiles.slice(0, 3)) {
+    try {
+      const { data: file } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path}", {
+        owner, repo, path,
+      }) as { data: { content: string; sha: string } };
+      fileContents[path] = {
+        content: Buffer.from(file.content, "base64").toString("utf8"),
+        sha: file.sha,
+      };
+    } catch {
+      // file not found, skip
+    }
+  }
+
+  if (Object.keys(fileContents).length === 0) {
+    return { step: "generate_diff", ok: false, message: "Could not read any target files from repo." };
+  }
+
+  // 4. Ask Claude to generate the modified file
+  const fileList = Object.entries(fileContents)
+    .map(([path, { content }]) => `=== ${path} ===\n${content}`)
+    .join("\n\n");
+
+  const diffRes = await anthropic.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 8192,
+    messages: [{
+      role: "user",
+      content: `You are a UI engineer implementing an A/B test variant. Apply ONLY the minimal change needed to implement this hypothesis:
+
+Element: ${activeHypothesis.element}
+Dimension: ${activeHypothesis.dimension}
+Variant value: ${activeHypothesis.variant_value}
+
+Here are the relevant source files:
+
+${fileList}
+
+Pick ONE file to modify. Return a JSON object with exactly two fields:
+- "path": the file path you modified (must be one of the files above)
+- "content": the COMPLETE new file content with only the minimal change applied
+
+Reply with only the JSON object, no markdown, no explanation.`,
+    }],
+  });
+
+  const diffText = diffRes.content[0].type === "text" ? diffRes.content[0].text.trim() : "";
+  // Extract JSON from response — Claude sometimes prepends explanation text
+  const jsonMatch = diffText.match(/\{[\s\S]*\}/);
+  let generated: { path: string; content: string };
+  try {
+    generated = JSON.parse(jsonMatch?.[0] ?? diffText);
+  } catch {
+    return { step: "generate_diff", ok: false, message: `Claude returned unparseable diff: ${diffText.slice(0, 200)}` };
+  }
+
+  // 5. Store result in active_hypothesis for openPr to use
+  const supabase = createAdminSupabase();
+  const branchName = `agent/experiment-${experimentId.slice(0, 8)}-cycle-${cycleNumber}`;
+  await supabase
+    .from("experiments")
+    .update({
+      active_hypothesis: {
+        ...activeHypothesis,
+        target_file: generated.path,
+        new_content: generated.content,
+        original_sha: fileContents[generated.path]?.sha ?? "",
+        branch_name: branchName,
+      },
+    })
+    .eq("id", experimentId);
+
   return {
     step: "generate_diff",
     ok: true,
-    message: `Would generate diff for ${JSON.stringify(activeHypothesis)} on ${repo}.`,
+    message: `Generated change in ${generated.path} for branch ${branchName}`,
   };
 }
 
 export async function openPr(
   orgId: string,
-  _experimentId: string,
+  experimentId: string,
   _context: PipelineContext,
 ): Promise<StepResult> {
   const connection = await getActiveConnection(orgId);
-  const repo = assertGithubTarget(connection);
-  // TODO: integrate test-open-pr.js logic here using connection.github_installation_id
+  const repoFull = assertGithubTarget(connection);
+
+  if (!connection.github_installation_id) {
+    return { step: "open_pr", ok: false, message: "No github_installation_id in connections." };
+  }
+
+  // Read fresh hypothesis (generateDiff stored target_file + new_content here)
+  const supabase = createAdminSupabase();
+  const { data: exp } = await supabase
+    .from("experiments")
+    .select("active_hypothesis, prompt_text")
+    .eq("id", experimentId)
+    .single();
+
+  const hypothesis = exp?.active_hypothesis as Record<string, string> | null;
+  if (!hypothesis?.target_file || !hypothesis?.new_content || !hypothesis?.branch_name) {
+    return { step: "open_pr", ok: false, message: "No generated diff found — run generate_diff first." };
+  }
+
+  const [owner, repo] = repoFull.split("/");
+  const octokit = await getInstallationOctokit(connection.github_installation_id);
+  const baseBranch = "main";
+
+  // 1. Get base SHA
+  const { data: ref } = await octokit.request("GET /repos/{owner}/{repo}/git/ref/{ref}", {
+    owner, repo, ref: `heads/${baseBranch}`,
+  });
+  const baseSha = ref.object.sha;
+
+  // 2. Create branch (ignore if already exists)
+  try {
+    await octokit.request("POST /repos/{owner}/{repo}/git/refs", {
+      owner, repo,
+      ref: `refs/heads/${hypothesis.branch_name}`,
+      sha: baseSha,
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "";
+    if (!msg.includes("already exists") && !msg.includes("Reference already exists")) {
+      return { step: "open_pr", ok: false, message: `Branch creation failed: ${msg}` };
+    }
+  }
+
+  // 3. Commit the generated file
+  await octokit.request("PUT /repos/{owner}/{repo}/contents/{path}", {
+    owner, repo,
+    path: hypothesis.target_file,
+    message: `experiment(agent): ${hypothesis.element} ${hypothesis.dimension} → ${hypothesis.variant_value}`,
+    content: Buffer.from(hypothesis.new_content).toString("base64"),
+    sha: hypothesis.original_sha,
+    branch: hypothesis.branch_name,
+  });
+
+  // 4. Open the PR
+  const { data: pr } = await octokit.request("POST /repos/{owner}/{repo}/pulls", {
+    owner, repo,
+    title: `[Agent] ${hypothesis.element}: ${hypothesis.variant_value}`,
+    head: hypothesis.branch_name,
+    base: baseBranch,
+    body: `## A/B Experiment\n\n**Element:** ${hypothesis.element}\n**Dimension:** ${hypothesis.dimension}\n**Variant:** ${hypothesis.variant_value}\n\n**Original prompt:** ${exp?.prompt_text ?? ""}\n\n_Opened automatically by Growth Agent._`,
+  });
+
+  // 5. Store PR URL on variant rows
+  await supabase
+    .from("variants")
+    .update({ pr_url: pr.html_url })
+    .eq("experiment_id", experimentId)
+    .eq("label", "variant_b");
+
   return {
     step: "open_pr",
     ok: true,
-    message: `Would open PR on ${repo}.`,
+    message: `PR opened: ${pr.html_url}`,
   };
 }
 
@@ -109,13 +291,14 @@ export async function createFlag(
   }
 
   const flagKey = `growth-agent-${experimentId.slice(0, 8)}-cycle-${cycleNumber}`;
+  const supabase = createAdminSupabase();
 
   const res = await fetch(
     `${posthog.host}/api/projects/${posthog.projectId}/feature_flags/`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${posthog.apiKey}`,
+        Authorization: `Bearer ${posthog.apiKey}`, // personal API key for management
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -137,13 +320,20 @@ export async function createFlag(
 
   if (!res.ok) {
     const body = await res.text();
+    // If flag already exists, treat it as success and continue
+    if (res.status === 400 && body.includes("unique")) {
+      await supabase
+        .from("variants")
+        .update({ posthog_flag_key: flagKey })
+        .eq("experiment_id", experimentId);
+      return { step: "create_flag", ok: true, message: `Flag already exists, reusing: ${flagKey}` };
+    }
     return { step: "create_flag", ok: false, message: `PostHog error: ${body}` };
   }
 
   const flag = await res.json();
 
   // Store flag key on both variant rows
-  const supabase = createAdminSupabase();
   await supabase
     .from("variants")
     .update({ posthog_flag_key: flagKey })
@@ -190,12 +380,12 @@ export async function simulateTraffic(
     })),
   );
 
-  // PostHog batch endpoint
+  // PostHog batch endpoint uses project token (phc_), not personal API key
   const res = await fetch(`${posthog.host}/batch/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      api_key: posthog.apiKey,
+      api_key: posthog.projectToken,
       batch: events,
     }),
   });
@@ -365,9 +555,10 @@ Combine the winning insights into a new, more refined hypothesis. Reply with onl
 
   const text = message.content[0].type === "text" ? message.content[0].text.trim() : "";
 
+  const jsonMatchSynth = text.match(/\{[\s\S]*\}/);
   let nextHypothesis: Record<string, string>;
   try {
-    nextHypothesis = JSON.parse(text);
+    nextHypothesis = JSON.parse(jsonMatchSynth?.[0] ?? text);
   } catch {
     return {
       step: "synthesize_next",

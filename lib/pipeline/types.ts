@@ -5,7 +5,8 @@ export type Connection = {
   org_id: string;
   github_installation_id: string | null;
   github_repo_full_name: string | null;
-  posthog_api_key: string | null;
+  posthog_api_key: string | null;       // personal key (phx_) — management API
+  posthog_project_token: string | null; // project token (phc_) — event capture
   posthog_project_id: string | null;
   posthog_host: string | null;
 };
