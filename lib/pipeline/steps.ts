@@ -93,28 +93,41 @@ export async function generateDiff(
   });
   const filePaths = tree.tree
     .filter((f) => f.type === "blob" && /\.(tsx?|jsx?|css|html)$/.test(f.path ?? ""))
-    .map((f) => f.path as string)
-    .slice(0, 30); // cap to avoid huge context
+    .map((f) => f.path as string);
 
-  // 2. Read up to 5 most likely relevant files — ask Claude which ones matter
+  // 2. Read first 60 lines of each file so Claude can pick based on actual content
+  const previews: string[] = [];
+  for (const path of filePaths) {
+    try {
+      const { data: file } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path}", {
+        owner, repo, path,
+      }) as { data: { content: string } };
+      const snippet = Buffer.from(file.content, "base64").toString("utf8").split("\n").slice(0, 60).join("\n");
+      previews.push(`=== ${path} ===\n${snippet}`);
+    } catch {
+      previews.push(`=== ${path} === (unreadable)`);
+    }
+  }
+
   const pickRes = await anthropic.messages.create({
     model: "claude-opus-4-8",
     max_tokens: 256,
     messages: [{
       role: "user",
-      content: `Given this UI experiment hypothesis: ${JSON.stringify(activeHypothesis)}\n\nThese are the source files in the repo:\n${filePaths.join("\n")}\n\nWhich 1-3 files are most likely to contain the UI element that needs to change? Reply with only a JSON array of file paths, no markdown.`,
+      content: `Given this UI experiment hypothesis: ${JSON.stringify(activeHypothesis)}\n\nHere are previews of every source file in the repo:\n\n${previews.join("\n\n")}\n\nWhich 1-3 files are most likely to contain the UI element that needs to change? Reply with only a JSON array of file paths, no markdown.`,
     }],
   });
 
   const pickText = pickRes.content[0].type === "text" ? pickRes.content[0].text.trim() : "[]";
+  const pickJsonMatch = pickText.match(/\[[\s\S]*\]/);
   let targetFiles: string[];
   try {
-    targetFiles = JSON.parse(pickText);
+    targetFiles = JSON.parse(pickJsonMatch?.[0] ?? pickText);
   } catch {
     targetFiles = [filePaths[0]];
   }
 
-  // 3. Read those files
+  // 3. Read chosen files in full
   const fileContents: Record<string, { content: string; sha: string }> = {};
   for (const path of targetFiles.slice(0, 3)) {
     try {
