@@ -56,9 +56,6 @@ export async function acceptInvite(token: string) {
   const { error } = await supabase.rpc("accept_invite", { invite_id: token });
 
   if (error) {
-    if (error.message.includes("already_member")) {
-      return { error: "You're already part of an organization." };
-    }
     if (error.message.includes("invalid_invite")) {
       return { error: "This invite link is no longer valid." };
     }

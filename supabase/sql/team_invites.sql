@@ -67,9 +67,9 @@ drop policy if exists "members can view their org invites" on invites;
 create policy "members can view their org invites" on invites
   for select using (org_id = my_org_id());
 
--- Atomic accept: validates the invite is unused, rejects users who already
--- belong to an org, and joins them — all in one statement so two people
--- racing the same single-use link can't both get in.
+-- Atomic accept: validates the invite is unused and joins the caller to that
+-- org, switching them out of any org they already belonged to. Single
+-- statement so two people racing the same single-use link can't both get in.
 create or replace function accept_invite(invite_id uuid)
 returns uuid
 language plpgsql
@@ -79,10 +79,6 @@ as $$
 declare
   v_org_id uuid;
 begin
-  if exists (select 1 from memberships where user_id = auth.uid()) then
-    raise exception 'already_member';
-  end if;
-
   update invites
   set accepted_at = now(), accepted_by = auth.uid()
   where id = invite_id and accepted_at is null
@@ -99,7 +95,13 @@ begin
     'member',
     (select raw_user_meta_data ->> 'user_name' from auth.users where id = auth.uid()),
     (select raw_user_meta_data ->> 'avatar_url' from auth.users where id = auth.uid())
-  );
+  )
+  on conflict (user_id) do update
+    set org_id = excluded.org_id,
+        role = excluded.role,
+        github_login = excluded.github_login,
+        avatar_url = excluded.avatar_url,
+        created_at = now();
 
   return v_org_id;
 end;
