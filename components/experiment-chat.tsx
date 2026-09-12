@@ -319,7 +319,7 @@ export function ExperimentChat({
         ) : (
           turns.map((turn) =>
             turn.kind === "user" ? (
-              <div key={turn.id} className="flex justify-end">
+              <div key={turn.id} className="rise-fast flex justify-end">
                 <div className="max-w-[75%] rounded-2xl bg-ink px-3.5 py-2 text-ticket">
                   <p className="m-0 text-[14px] leading-snug">{turn.text}</p>
                   {turn.images.length > 0 ? (
@@ -337,11 +337,11 @@ export function ExperimentChat({
                 {turn.steps.map((card) => (
                   <div
                     key={`${turn.id}-${card.step}`}
-                    className="flex items-center gap-2.5 rounded-lg border border-rule/40 bg-ticket/60 px-2.5 py-1.5"
+                    className="rise-fast flex items-center gap-2.5 rounded-lg border border-rule/40 bg-ticket/60 px-2.5 py-1.5"
                   >
                     <span
                       className={cn(
-                        "grid size-5 shrink-0 place-items-center rounded-full border",
+                        "grid size-5 shrink-0 place-items-center rounded-full border transition-colors duration-200",
                         card.status === "error"
                           ? "border-[#C23A2B] text-[#C23A2B]"
                           : card.status === "done"
@@ -414,7 +414,7 @@ export function ExperimentChat({
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            className="grid size-8 shrink-0 place-items-center rounded-full text-mute transition hover:text-ink"
+            className="grid size-8 shrink-0 place-items-center rounded-full text-mute transition duration-100 hover:text-ink active:scale-90"
             aria-label="Attach images"
           >
             <ImagePlus className="size-4" strokeWidth={1.75} />
@@ -435,7 +435,7 @@ export function ExperimentChat({
           <button
             type="submit"
             disabled={pending || !draft.trim()}
-            className="grid size-8 shrink-0 place-items-center rounded-full bg-ink text-ticket transition disabled:opacity-40"
+            className="grid size-8 shrink-0 place-items-center rounded-full bg-ink text-ticket transition duration-100 active:scale-90 disabled:opacity-40 disabled:active:scale-100"
             aria-label="Send"
           >
             {pending ? (

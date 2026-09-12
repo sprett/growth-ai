@@ -97,19 +97,21 @@ export default async function DashboardPage({
   return (
     <div className="flex h-screen overflow-hidden bg-ledger">
       <aside className="flex w-64 shrink-0 flex-col border-r border-rule/40">
-        <div className="flex items-center justify-between gap-2 border-b border-rule/40 px-4 py-4">
+        <div className="flex h-14 shrink-0 items-center border-b border-rule/40 px-4">
           <p className="m-0 font-mono text-[11px] tracking-[0.18em] text-mute uppercase">
             Growth agent
           </p>
         </div>
 
-        <Link
-          href="/"
-          className="mx-3 mt-3 mb-2 inline-flex items-center gap-2 rounded-lg border border-rule px-3 py-2 font-mono text-[11px] tracking-[0.08em] uppercase transition hover:bg-ticket"
-        >
-          <SquarePen className="size-3.5" strokeWidth={1.75} />
-          New chat
-        </Link>
+        <div className="px-3 pt-3 pb-2">
+          <Link
+            href="/"
+            className="flex items-center gap-2 rounded-lg border border-rule px-3 py-2 font-mono text-[11px] tracking-[0.08em] uppercase transition-colors duration-150 hover:bg-ticket active:scale-[0.98]"
+          >
+            <SquarePen className="size-3.5" strokeWidth={1.75} />
+            New chat
+          </Link>
+        </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-1">
           <p className="m-0 mb-1.5 px-1 font-mono text-[10px] tracking-[0.14em] text-mute uppercase">
@@ -124,7 +126,7 @@ export default async function DashboardPage({
                   <Link
                     href={`/?experiment=${experiment.id}`}
                     className={cn(
-                      "flex items-center gap-2 truncate rounded-lg px-2 py-1.5 text-[13px] transition hover:bg-ticket",
+                      "flex items-center gap-2 truncate rounded-lg px-2 py-1.5 text-[13px] transition-colors duration-150 hover:bg-ticket",
                       selectedExperimentId === experiment.id ? "bg-ticket" : "",
                     )}
                   >
@@ -137,10 +139,10 @@ export default async function DashboardPage({
           )}
         </nav>
 
-        <div className="flex items-center justify-between gap-2 border-t border-rule/40 px-3 py-3">
+        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-t border-rule/40 px-3">
           <Link
             href="/settings"
-            className="flex items-center gap-2 rounded-lg px-2 py-1.5 font-mono text-[11px] tracking-[0.06em] text-mute uppercase transition hover:bg-ticket"
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 font-mono text-[11px] tracking-[0.06em] text-mute uppercase transition-colors duration-150 hover:bg-ticket"
           >
             <Settings className="size-3.5" strokeWidth={1.75} />
             Settings
@@ -148,7 +150,7 @@ export default async function DashboardPage({
           <form action={signOut}>
             <button
               type="submit"
-              className="grid size-8 place-items-center rounded-lg text-mute transition hover:bg-ticket"
+              className="grid size-8 place-items-center rounded-lg text-mute transition-colors duration-150 hover:bg-ticket active:scale-[0.95]"
               aria-label="Sign out"
             >
               <LogOut className="size-3.5" strokeWidth={1.75} />
@@ -158,12 +160,12 @@ export default async function DashboardPage({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-rule/40 px-6 py-3">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-rule/40 px-6">
           <GithubMark className="size-4" />
           <span className="truncate font-mono text-[12px] text-mute">{repo}</span>
         </header>
 
-        <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col overflow-hidden px-6">
+        <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col overflow-hidden px-6 pb-6">
           <ExperimentChat key={selectedExperimentId ?? "new"} initialExperiment={initialExperiment} />
         </main>
       </div>

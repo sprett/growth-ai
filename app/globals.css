@@ -64,6 +64,13 @@
   .rise-delay-2 {
     animation: rise 0.55s ease 180ms both;
   }
+
+  /* Shorter/snappier than .rise — for elements that can appear repeatedly
+     in quick succession (chat turns, step cards), where a 0.55s entrance
+     would feel sluggish rather than a one-time page reveal. */
+  .rise-fast {
+    animation: rise-fast 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
 }
 
 @keyframes rise {
@@ -74,6 +81,26 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes rise-fast {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .rise-delay,
+  .rise-delay-2,
+  .rise-fast {
+    animation: none;
   }
 }
 
