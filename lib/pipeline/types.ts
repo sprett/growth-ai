@@ -20,8 +20,15 @@ export type PipelineStepName =
   | "update_playbook"
   | "synthesize_next";
 
+export type PipelineContext = {
+  promptText: string;
+  cycleNumber: number;
+  activeHypothesis: Record<string, string> | null;
+};
+
 export type StepResult = {
   step: PipelineStepName;
   ok: boolean;
   message: string;
+  nextHypothesis?: Record<string, string>;
 };

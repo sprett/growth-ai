@@ -11,6 +11,8 @@
     "seed:connection": "node --env-file=.env scripts/seed-connection.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.125.0",
+    "@octokit/app": "^16.1.4",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.116.0",
     "clsx": "^2.1.1",

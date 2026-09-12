@@ -41,5 +41,12 @@ export async function startExperiment(formData: FormData) {
   }
 
   revalidatePath("/");
+
+  // Fire-and-forget — do not await, returns immediately to the UI
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  fetch(`${siteUrl}/api/pipeline/${experiment.id}`, { method: "POST" }).catch(
+    () => {},
+  );
+
   return { ok: true, experimentId: experiment.id as string };
 }
