@@ -8,16 +8,29 @@ export type NormalizedSpec = {
 
 /**
  * The parser (parseRequest) is intentionally open-ended about element/dimension
- * — it just asks Claude for "e.g. cta_button" / "copy | color | placement".
- * AuthPanel.tsx only actually has these four tunable fields, so anything else
- * (e.g. "placement") fails here with a clear message rather than silently
- * doing nothing.
+ * — it just asks Claude for "e.g. cta_button" / "copy | color | placement",
+ * with no enum constraint. In practice the model returns close-but-not-exact
+ * labels (observed: "signup_cta_button" instead of "cta_button"), so this
+ * matches by keyword rather than exact string equality. AuthPanel.tsx only
+ * actually has these four tunable fields, so anything that doesn't match a
+ * known keyword (e.g. "placement") fails with a clear message rather than
+ * silently doing nothing.
  */
 function fieldFor(spec: Pick<NormalizedSpec, "element" | "dimension">): keyof AuthCopyEntry {
-  if (spec.element === "cta_button" && spec.dimension === "copy") return "ctaLabel";
-  if (spec.element === "cta_button" && spec.dimension === "color") return "ctaColorClass";
-  if (spec.element === "headline" && spec.dimension === "copy") return "headline";
-  if (spec.element === "tagline" && spec.dimension === "copy") return "tagline";
+  const element = spec.element.toLowerCase();
+  const dimension = spec.dimension.toLowerCase();
+
+  const isCta = element.includes("cta") || element.includes("button");
+  const isHeadline = element.includes("headline") || element.includes("title");
+  const isTagline = element.includes("tagline") || element.includes("subtitle") || element.includes("description");
+  const isColor = dimension.includes("color") || dimension.includes("colour");
+  const isCopy = dimension.includes("copy") || dimension.includes("text") || dimension.includes("label");
+
+  if (isCta && isColor) return "ctaColorClass";
+  if (isCta && isCopy) return "ctaLabel";
+  if (isHeadline && isCopy) return "headline";
+  if (isTagline && isCopy) return "tagline";
+
   throw new Error(
     `Unsupported combination: ${spec.element}/${spec.dimension} — AuthPanel only supports ` +
       `cta_button (copy or color), headline (copy), and tagline (copy).`,

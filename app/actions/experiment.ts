@@ -44,11 +44,15 @@ export async function startExperiment(
 
   revalidatePath("/");
 
-  // Fire-and-forget — do not await, returns immediately to the UI
+  // Fire-and-forget — do not await, returns immediately to the UI. Carries no
+  // user cookies (server-to-server), so the route is authorized by a shared
+  // secret instead of a session — see PIPELINE_INTERNAL_SECRET.
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
-  fetch(`${siteUrl}/api/pipeline/${experiment.id}`, { method: "POST" }).catch(
-    () => {},
-  );
+  const internalSecret = process.env.PIPELINE_INTERNAL_SECRET;
+  fetch(`${siteUrl}/api/pipeline/${experiment.id}`, {
+    method: "POST",
+    headers: internalSecret ? { "x-pipeline-secret": internalSecret } : undefined,
+  }).catch(() => {});
 
   return { ok: true, experimentId: experiment.id as string };
 }
@@ -66,6 +70,7 @@ export type ExperimentProgress = {
   status: string | null;
   currentStep: string | null;
   activeHypothesis: Record<string, unknown> | null;
+  errorMessage: string | null;
   variants: ExperimentVariantProgress[];
 };
 
@@ -74,6 +79,11 @@ export type ExperimentProgress = {
  * (app/api/pipeline/[experimentId]) is in flight — that route runs
  * fire-and-forget with no synchronous result, so this is how the UI
  * observes progress.
+ *
+ * Scoped to the caller's own org: `experiments`/`variants` have no RLS
+ * policies of their own (only `memberships`/`invites` do), so this
+ * server-side org_id filter is the only thing stopping one org from
+ * reading another org's experiment by guessing/enumerating its id.
  */
 export async function getExperimentProgress(
   experimentId: string,
@@ -83,11 +93,13 @@ export async function getExperimentProgress(
   if (userError || !userData.user) {
     return { error: "Not signed in" };
   }
+  const orgId = await getOrgId(supabase, userData.user);
 
   const { data: experiment, error } = await supabase
     .from("experiments")
     .select("status, current_step, active_hypothesis")
     .eq("id", experimentId)
+    .eq("org_id", orgId)
     .single();
 
   if (error || !experiment) {
@@ -97,14 +109,20 @@ export async function getExperimentProgress(
   const { data: variants } = await supabase
     .from("variants")
     .select("label, element, dimension, value, pr_url, posthog_flag_key")
-    .eq("experiment_id", experimentId);
+    .eq("experiment_id", experimentId)
+    .eq("org_id", orgId);
+
+  const activeHypothesis = experiment.active_hypothesis as Record<string, unknown> | null;
+  const errorMessage =
+    typeof activeHypothesis?.error_message === "string" ? activeHypothesis.error_message : null;
 
   return {
     ok: true,
     progress: {
       status: experiment.status as string | null,
       currentStep: experiment.current_step as string | null,
-      activeHypothesis: experiment.active_hypothesis as Record<string, unknown> | null,
+      activeHypothesis,
+      errorMessage,
       variants: (variants ?? []) as ExperimentVariantProgress[],
     },
   };

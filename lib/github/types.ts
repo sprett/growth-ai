@@ -23,4 +23,6 @@ export type OpenPrResult = {
 
 export interface GithubClient {
   openPullRequest(input: OpenPrInput): Promise<OpenPrResult>;
+  /** Returns null if the file doesn't exist at that ref (a new file). */
+  getFileContent(target: GithubTarget, path: string): Promise<string | null>;
 }

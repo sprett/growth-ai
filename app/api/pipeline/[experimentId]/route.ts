@@ -1,23 +1,23 @@
 import { createAdminSupabase } from "@/lib/supabase-admin";
 import { runStep } from "@/lib/pipeline/run";
-import type { PipelineStepName } from "@/lib/pipeline/types";
+import { PIPELINE_STEP_ORDER } from "@/lib/pipeline/types";
 import { NextResponse } from "next/server";
 
-const STEPS: PipelineStepName[] = [
-  "parse_request",
-  "generate_diff",
-  "open_pr",
-  "create_flag",
-  "simulate_traffic",
-  "analyze_results",
-  "update_playbook",
-  "synthesize_next",
-];
-
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ experimentId: string }> },
 ) {
+  // This route carries no user session (it's hit by startExperiment's
+  // server-to-server fire-and-forget fetch, which has no cookies to send)
+  // and is exempted from the auth middleware for that reason — a shared
+  // secret is the only thing standing between "internal trigger" and "any
+  // caller who knows an experiment id can spend Anthropic/GitHub/PostHog
+  // calls on someone else's org."
+  const expectedSecret = process.env.PIPELINE_INTERNAL_SECRET;
+  if (expectedSecret && req.headers.get("x-pipeline-secret") !== expectedSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { experimentId } = await params;
   const supabase = createAdminSupabase();
 
@@ -33,7 +33,7 @@ export async function POST(
 
   const orgId = experiment.org_id as string;
 
-  for (const step of STEPS) {
+  for (const step of PIPELINE_STEP_ORDER) {
     await supabase
       .from("experiments")
       .update({ current_step: step, status: "running" })
@@ -58,9 +58,23 @@ export async function POST(
     });
 
     if (!result.ok) {
+      // Stash the real failure reason inside active_hypothesis (jsonb) rather
+      // than adding a migration for a dedicated column — analyzeResults
+      // already merges its own `results` key into this same column, so this
+      // follows the pattern already established here. The chat reads
+      // `activeHypothesis.error_message` to show the actual reason instead
+      // of a generic "<step> failed."
+      const currentHypothesis =
+        (freshExperiment?.active_hypothesis as Record<string, unknown> | null | undefined) ??
+        (experiment.active_hypothesis as Record<string, unknown> | null) ??
+        {};
       await supabase
         .from("experiments")
-        .update({ status: "failed", current_step: step })
+        .update({
+          status: "failed",
+          current_step: step,
+          active_hypothesis: { ...currentHypothesis, error_message: result.message },
+        })
         .eq("id", experimentId);
       return NextResponse.json({ error: result.message, step }, { status: 500 });
     }

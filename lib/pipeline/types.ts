@@ -20,6 +20,22 @@ export type PipelineStepName =
   | "update_playbook"
   | "synthesize_next";
 
+/**
+ * The single source of truth for step order — app/api/pipeline/[experimentId]
+ * and lib/pipeline/step-meta.ts both import this instead of keeping their own
+ * copy, so they can't drift out of sync with each other.
+ */
+export const PIPELINE_STEP_ORDER: PipelineStepName[] = [
+  "parse_request",
+  "generate_diff",
+  "open_pr",
+  "create_flag",
+  "simulate_traffic",
+  "analyze_results",
+  "update_playbook",
+  "synthesize_next",
+];
+
 export type PipelineContext = {
   promptText: string;
   cycleNumber: number;

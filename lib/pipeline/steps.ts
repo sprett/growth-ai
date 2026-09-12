@@ -8,7 +8,12 @@ import { createAdminSupabase } from "@/lib/supabase-admin";
 import type { PipelineContext, StepResult } from "@/lib/pipeline/types";
 import { getGithubClient } from "@/lib/github";
 import { applyExperimentSpec, buildPrBody, normalizeHypothesis, pickEntryField } from "@/lib/pipeline/auth-copy";
-import { AUTH_COPY_DEFAULT, AUTH_PANEL_PATH, renderAuthPanelFile } from "@/lib/pipeline/auth-panel-template";
+import {
+  AUTH_COPY_DEFAULT,
+  AUTH_PANEL_ORIGINAL_SNAPSHOT,
+  AUTH_PANEL_PATH,
+  renderAuthPanelFile,
+} from "@/lib/pipeline/auth-panel-template";
 import { slugify } from "@/lib/utils";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -120,15 +125,39 @@ export async function openPr(
     const content = renderAuthPanelFile(nextBlock);
     const prBody = buildPrBody(spec, before);
 
+    const target = {
+      installationId: connection.github_installation_id,
+      repoFullName: repo,
+      baseBranch: "main",
+    };
+
+    const client = getGithubClient();
+
+    // AUTH_COPY_DEFAULT is a point-in-time snapshot of the real file. The
+    // live file is only a valid base to build on if it's either still the
+    // pristine pre-refactor original, or already exactly our own rendered
+    // baseline (from a previously merged growth-agent PR) — anything else
+    // means someone else committed to it, and blindly PUTting our rendered
+    // version would silently revert that work while looking like a
+    // one-field copy change in the PR. Fail loudly instead.
+    const liveContent = await client.getFileContent(target, AUTH_PANEL_PATH);
+    const isKnownBaseline =
+      liveContent === null ||
+      liveContent === AUTH_PANEL_ORIGINAL_SNAPSHOT ||
+      liveContent === renderAuthPanelFile(AUTH_COPY_DEFAULT);
+    if (!isKnownBaseline) {
+      return {
+        step: "open_pr",
+        ok: false,
+        message: `${AUTH_PANEL_PATH} has diverged from the growth agent's known baseline (lib/pipeline/auth-panel-template.ts) — regenerate that template before opening another PR.`,
+      };
+    }
+
     const slug = slugify(spec.variant_value).slice(0, 32) || "variant";
     const branchName = `growth-agent/cycle-${cycleNumber}-${slug}-${experimentId.slice(0, 8)}`;
 
-    const result = await getGithubClient().openPullRequest({
-      target: {
-        installationId: connection.github_installation_id,
-        repoFullName: repo,
-        baseBranch: "main",
-      },
+    const result = await client.openPullRequest({
+      target,
       branchName,
       commitMessage: `Experiment: ${spec.element} ${spec.dimension} → ${spec.variant_value}`,
       prTitle: `Growth agent: ${spec.element} ${spec.dimension} experiment`,
@@ -137,7 +166,13 @@ export async function openPr(
     });
 
     const admin = createAdminSupabase();
-    await admin.from("variants").update({ pr_url: result.prUrl }).eq("experiment_id", experimentId);
+    // Only variant_b actually got a PR — updating unscoped would also stamp
+    // it onto the control row.
+    await admin
+      .from("variants")
+      .update({ pr_url: result.prUrl })
+      .eq("experiment_id", experimentId)
+      .eq("label", "variant_b");
 
     return {
       step: "open_pr",

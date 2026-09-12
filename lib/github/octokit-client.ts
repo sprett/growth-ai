@@ -1,5 +1,5 @@
 import { App } from "@octokit/app";
-import type { GithubClient, OpenPrInput, OpenPrResult } from "@/lib/github/types";
+import type { GithubClient, GithubTarget, OpenPrInput, OpenPrResult } from "@/lib/github/types";
 
 let cachedApp: App | null = null;
 
@@ -30,16 +30,46 @@ function isNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "status" in error && (error as { status?: number }).status === 404;
 }
 
+function isUnprocessableError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "status" in error && (error as { status?: number }).status === 422;
+}
+
+async function getInstallationOctokit(installationId: string) {
+  const app = getApp();
+  const numericId = Number(installationId);
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    throw new Error(`Invalid github_installation_id: "${installationId}"`);
+  }
+  return app.getInstallationOctokit(numericId);
+}
+
 export function createOctokitGithubClient(): GithubClient {
   return {
-    async openPullRequest(input: OpenPrInput): Promise<OpenPrResult> {
-      const app = getApp();
-      const installationId = Number(input.target.installationId);
-      if (!Number.isFinite(installationId) || installationId <= 0) {
-        throw new Error(`Invalid github_installation_id: "${input.target.installationId}"`);
-      }
+    async getFileContent(target: GithubTarget, path: string): Promise<string | null> {
+      const octokit = await getInstallationOctokit(target.installationId);
+      const { owner, repo } = splitRepoFullName(target.repoFullName);
 
-      const octokit = await app.getInstallationOctokit(installationId);
+      try {
+        const { data } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path}", {
+          owner,
+          repo,
+          path,
+          ref: target.baseBranch,
+        });
+        if (Array.isArray(data) || data.type !== "file") {
+          return null;
+        }
+        return Buffer.from(data.content, "base64").toString("utf8");
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          return null;
+        }
+        throw error;
+      }
+    },
+
+    async openPullRequest(input: OpenPrInput): Promise<OpenPrResult> {
+      const octokit = await getInstallationOctokit(input.target.installationId);
       const { owner, repo } = splitRepoFullName(input.target.repoFullName);
 
       const { data: baseRef } = await octokit.request("GET /repos/{owner}/{repo}/git/ref/{ref}", {
@@ -49,12 +79,30 @@ export function createOctokitGithubClient(): GithubClient {
       });
       const baseSha = baseRef.object.sha;
 
-      await octokit.request("POST /repos/{owner}/{repo}/git/refs", {
-        owner,
-        repo,
-        ref: `refs/heads/${input.branchName}`,
-        sha: baseSha,
-      });
+      // branchName is deterministic (derived from cycle/slug/experiment id),
+      // so a second run against the same experiment collides with a
+      // "Reference already exists" 422. Fall back to a randomized suffix
+      // once rather than hard-failing or leaving the caller to retry.
+      let branchName = input.branchName;
+      try {
+        await octokit.request("POST /repos/{owner}/{repo}/git/refs", {
+          owner,
+          repo,
+          ref: `refs/heads/${branchName}`,
+          sha: baseSha,
+        });
+      } catch (error) {
+        if (!isUnprocessableError(error)) {
+          throw error;
+        }
+        branchName = `${input.branchName}-${Math.random().toString(36).slice(2, 8)}`;
+        await octokit.request("POST /repos/{owner}/{repo}/git/refs", {
+          owner,
+          repo,
+          ref: `refs/heads/${branchName}`,
+          sha: baseSha,
+        });
+      }
 
       for (const file of input.files) {
         let existingSha: string | undefined;
@@ -63,7 +111,7 @@ export function createOctokitGithubClient(): GithubClient {
             owner,
             repo,
             path: file.path,
-            ref: input.branchName,
+            ref: branchName,
           });
           if (!Array.isArray(existing)) {
             existingSha = existing.sha;
@@ -80,7 +128,7 @@ export function createOctokitGithubClient(): GithubClient {
           path: file.path,
           message: input.commitMessage,
           content: Buffer.from(file.content, "utf8").toString("base64"),
-          branch: input.branchName,
+          branch: branchName,
           ...(existingSha ? { sha: existingSha } : {}),
         });
       }
@@ -89,12 +137,12 @@ export function createOctokitGithubClient(): GithubClient {
         owner,
         repo,
         title: input.prTitle,
-        head: input.branchName,
+        head: branchName,
         base: input.target.baseBranch,
         body: input.prBody,
       });
 
-      return { prUrl: pr.html_url, prNumber: pr.number, branchName: input.branchName };
+      return { prUrl: pr.html_url, prNumber: pr.number, branchName };
     },
   };
 }

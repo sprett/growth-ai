@@ -9,18 +9,9 @@ import {
   SquarePen,
   type LucideIcon,
 } from "lucide-react";
-import type { PipelineStepName } from "@/lib/pipeline/types";
+import { PIPELINE_STEP_ORDER, type PipelineStepName } from "@/lib/pipeline/types";
 
-export const STEP_ORDER: PipelineStepName[] = [
-  "parse_request",
-  "generate_diff",
-  "open_pr",
-  "create_flag",
-  "simulate_traffic",
-  "analyze_results",
-  "update_playbook",
-  "synthesize_next",
-];
+export const STEP_ORDER = PIPELINE_STEP_ORDER;
 
 export const STEP_META: Record<PipelineStepName, { label: string; icon: LucideIcon }> = {
   parse_request: { label: "Parse request", icon: MessageSquareText },

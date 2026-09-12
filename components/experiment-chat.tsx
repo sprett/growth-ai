@@ -14,6 +14,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 const POLL_INTERVAL_MS = 1500;
 const TERMINAL_STATUSES = new Set(["done", "failed", "awaiting_loop"]);
+const MAX_POLL_ATTEMPTS = 120; // ~3 minutes at POLL_INTERVAL_MS
+const MAX_CONSECUTIVE_POLL_ERRORS = 5;
 
 type StepCardStatus = "pending" | "revealing" | "done" | "error";
 
@@ -28,6 +30,8 @@ type RunTurn = {
   id: string;
   experimentId: string;
   steps: StepCard[];
+  /** Set when polling gives up (too many attempts, or too many consecutive errors) rather than reaching a terminal status. */
+  giveUpMessage: string | null;
 };
 
 type UserTurn = {
@@ -52,7 +56,7 @@ function stepMessage(step: PipelineStepName, status: StepCardStatus, progress: E
     | null;
 
   if (status === "error") {
-    return `${STEP_META[step].label} failed.`;
+    return progress.errorMessage ?? `${STEP_META[step].label} failed.`;
   }
 
   switch (step) {
@@ -121,6 +125,7 @@ export function ExperimentChat() {
   const [error, setError] = useState<string | null>(null);
   const [activePolls, setActivePolls] = useState<string[]>([]);
   const activePollsRef = useRef<string[]>([]);
+  const pollStateRef = useRef<Map<string, { attempts: number; consecutiveErrors: number }>>(new Map());
 
   useEffect(() => {
     activePollsRef.current = activePolls;
@@ -131,12 +136,46 @@ export function ExperimentChat() {
       return;
     }
 
-    const interval = setInterval(async () => {
-      for (const experimentId of activePollsRef.current) {
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    function stopPolling(experimentId: string, giveUpMessage?: string) {
+      pollStateRef.current.delete(experimentId);
+      setActivePolls((current) => current.filter((id) => id !== experimentId));
+      if (giveUpMessage) {
+        setTurns((current) =>
+          current.map((turn) =>
+            turn.kind === "run" && turn.experimentId === experimentId
+              ? { ...turn, giveUpMessage }
+              : turn,
+          ),
+        );
+      }
+    }
+
+    async function tick() {
+      // Snapshot: activePollsRef can change (a stopPolling call below, or a
+      // new run turn added mid-tick) while this tick's awaits are in flight.
+      for (const experimentId of [...activePollsRef.current]) {
+        const state = pollStateRef.current.get(experimentId) ?? { attempts: 0, consecutiveErrors: 0 };
+        state.attempts += 1;
+
         const result = await getExperimentProgress(experimentId);
+
         if ("error" in result) {
+          state.consecutiveErrors += 1;
+          pollStateRef.current.set(experimentId, state);
+          if (state.consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+            stopPolling(
+              experimentId,
+              "Lost track of this experiment's progress — refresh the page to check its latest status.",
+            );
+          }
           continue;
         }
+
+        state.consecutiveErrors = 0;
+        pollStateRef.current.set(experimentId, state);
 
         setTurns((current) =>
           current.map((turn) =>
@@ -147,13 +186,30 @@ export function ExperimentChat() {
         );
 
         if (result.progress.status && TERMINAL_STATUSES.has(result.progress.status)) {
-          setActivePolls((current) => current.filter((id) => id !== experimentId));
+          stopPolling(experimentId);
           router.refresh();
+          continue;
+        }
+
+        if (state.attempts >= MAX_POLL_ATTEMPTS) {
+          stopPolling(
+            experimentId,
+            "This is taking longer than expected — refresh the page to check its latest status.",
+          );
         }
       }
-    }, POLL_INTERVAL_MS);
 
-    return () => clearInterval(interval);
+      if (!cancelled && activePollsRef.current.length > 0) {
+        timeoutId = setTimeout(tick, POLL_INTERVAL_MS);
+      }
+    }
+
+    timeoutId = setTimeout(tick, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [activePolls.length, router]);
 
   function addFiles(list: FileList | null) {
@@ -203,6 +259,7 @@ export function ExperimentChat() {
       id: crypto.randomUUID(),
       experimentId: result.experimentId,
       steps: [{ step: "parse_request", status: "revealing", message: "Working…" }],
+      giveUpMessage: null,
     };
     setTurns((current) => [...current, runTurn]);
     setActivePolls((current) => [...current, result.experimentId]);
@@ -279,6 +336,11 @@ export function ExperimentChat() {
                     </div>
                   </div>
                 ))}
+                {turn.giveUpMessage ? (
+                  <p className="m-0 font-mono text-[11px] leading-snug text-[#C23A2B]">
+                    {turn.giveUpMessage}
+                  </p>
+                ) : null}
               </div>
             ),
           )
