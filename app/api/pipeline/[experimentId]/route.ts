@@ -39,10 +39,22 @@ export async function POST(
       .update({ current_step: step, status: "running" })
       .eq("id", experimentId);
 
+    // Re-read active_hypothesis (and cycle_number) before every step: earlier
+    // steps in this same loop (parse_request, analyze_results) write it, and
+    // the `experiment` object fetched once above the loop would otherwise be
+    // stale for every step after the first.
+    const { data: freshExperiment } = await supabase
+      .from("experiments")
+      .select("cycle_number, active_hypothesis")
+      .eq("id", experimentId)
+      .single();
+
     const result = await runStep(step, orgId, experimentId, {
       promptText: experiment.prompt_text as string,
-      cycleNumber: (experiment.cycle_number as number) ?? 1,
-      activeHypothesis: experiment.active_hypothesis as Record<string, string> | null,
+      cycleNumber: (freshExperiment?.cycle_number as number | undefined) ?? (experiment.cycle_number as number) ?? 1,
+      activeHypothesis:
+        (freshExperiment?.active_hypothesis as Record<string, string> | null | undefined) ??
+        (experiment.active_hypothesis as Record<string, string> | null),
     });
 
     if (!result.ok) {

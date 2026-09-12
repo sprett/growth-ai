@@ -6,6 +6,10 @@ import {
 } from "@/lib/pipeline/connection";
 import { createAdminSupabase } from "@/lib/supabase-admin";
 import type { PipelineContext, StepResult } from "@/lib/pipeline/types";
+import { getGithubClient } from "@/lib/github";
+import { applyExperimentSpec, buildPrBody, normalizeHypothesis, pickEntryField } from "@/lib/pipeline/auth-copy";
+import { AUTH_COPY_DEFAULT, AUTH_PANEL_PATH, renderAuthPanelFile } from "@/lib/pipeline/auth-panel-template";
+import { slugify } from "@/lib/utils";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -72,27 +76,81 @@ export async function generateDiff(
     return { step: "generate_diff", ok: false, message: "No active_hypothesis — run parse_request first." };
   }
 
-  // TODO: call Claude to generate the actual diff against the fake-customer repo
-  return {
-    step: "generate_diff",
-    ok: true,
-    message: `Would generate diff for ${JSON.stringify(activeHypothesis)} on ${repo}.`,
-  };
+  try {
+    const spec = normalizeHypothesis(activeHypothesis);
+    const before = pickEntryField(AUTH_COPY_DEFAULT.signup, spec);
+    // Validates the combination is one AuthPanel.tsx actually supports —
+    // throws before we ever try to open a PR for something we can't apply.
+    applyExperimentSpec(AUTH_COPY_DEFAULT, spec);
+
+    return {
+      step: "generate_diff",
+      ok: true,
+      message: `Prepared ${AUTH_PANEL_PATH} on ${repo}: ${spec.element}/${spec.dimension} "${before}" → "${spec.variant_value}".`,
+    };
+  } catch (error) {
+    return {
+      step: "generate_diff",
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not prepare the diff",
+    };
+  }
 }
 
 export async function openPr(
   orgId: string,
-  _experimentId: string,
-  _context: PipelineContext,
+  experimentId: string,
+  context: PipelineContext,
 ): Promise<StepResult> {
   const connection = await getActiveConnection(orgId);
   const repo = assertGithubTarget(connection);
-  // TODO: integrate test-open-pr.js logic here using connection.github_installation_id
-  return {
-    step: "open_pr",
-    ok: true,
-    message: `Would open PR on ${repo}.`,
-  };
+  const { activeHypothesis, cycleNumber } = context;
+
+  if (!activeHypothesis) {
+    return { step: "open_pr", ok: false, message: "No active_hypothesis — run parse_request first." };
+  }
+  if (!connection.github_installation_id) {
+    return { step: "open_pr", ok: false, message: "connections.github_installation_id is empty" };
+  }
+
+  try {
+    const spec = normalizeHypothesis(activeHypothesis);
+    const before = pickEntryField(AUTH_COPY_DEFAULT.signup, spec);
+    const nextBlock = applyExperimentSpec(AUTH_COPY_DEFAULT, spec);
+    const content = renderAuthPanelFile(nextBlock);
+    const prBody = buildPrBody(spec, before);
+
+    const slug = slugify(spec.variant_value).slice(0, 32) || "variant";
+    const branchName = `growth-agent/cycle-${cycleNumber}-${slug}-${experimentId.slice(0, 8)}`;
+
+    const result = await getGithubClient().openPullRequest({
+      target: {
+        installationId: connection.github_installation_id,
+        repoFullName: repo,
+        baseBranch: "main",
+      },
+      branchName,
+      commitMessage: `Experiment: ${spec.element} ${spec.dimension} → ${spec.variant_value}`,
+      prTitle: `Growth agent: ${spec.element} ${spec.dimension} experiment`,
+      prBody,
+      files: [{ path: AUTH_PANEL_PATH, content }],
+    });
+
+    const admin = createAdminSupabase();
+    await admin.from("variants").update({ pr_url: result.prUrl }).eq("experiment_id", experimentId);
+
+    return {
+      step: "open_pr",
+      ok: true,
+      message: `Opened ${result.prUrl}`,
+    };
+  } catch (error) {
+    return {
+      step: "open_pr",
+      ok: false,
+      message: error instanceof Error ? error.message : "Could not open the PR",
+    };
+  }
 }
 
 export async function createFlag(
