@@ -12,9 +12,10 @@ export async function POST(
   // and is exempted from the auth middleware for that reason — a shared
   // secret is the only thing standing between "internal trigger" and "any
   // caller who knows an experiment id can spend Anthropic/GitHub/PostHog
-  // calls on someone else's org."
+  // calls on someone else's org." Fails closed: a missing
+  // PIPELINE_INTERNAL_SECRET is a misconfiguration, not "no check needed."
   const expectedSecret = process.env.PIPELINE_INTERNAL_SECRET;
-  if (expectedSecret && req.headers.get("x-pipeline-secret") !== expectedSecret) {
+  if (!expectedSecret || req.headers.get("x-pipeline-secret") !== expectedSecret) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
