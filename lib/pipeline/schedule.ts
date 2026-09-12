@@ -1,5 +1,8 @@
 import { PIPELINE_STEP_ORDER, type PipelineStepName } from "@/lib/pipeline/types";
 
+/** First step that may run only after the experiment's PR has been merged. */
+export const POST_MERGE_STEP: PipelineStepName = "create_flag";
+
 export function shouldPauseAfter(step: PipelineStepName): boolean {
   return step === "open_pr";
 }

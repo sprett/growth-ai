@@ -2,6 +2,7 @@
 
 import { getOrgId } from "@/lib/org";
 import { parseHypothesisFromPrompt } from "@/lib/pipeline/steps";
+import { triggerPipeline } from "@/lib/pipeline/trigger";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -78,11 +79,7 @@ export async function startExperiment(
   // user cookies (server-to-server), so the route is authorized by a shared
   // secret instead of a session — see PIPELINE_INTERNAL_SECRET.
   const siteUrl = await resolveSiteOrigin();
-  const internalSecret = process.env.PIPELINE_INTERNAL_SECRET;
-  fetch(`${siteUrl}/api/pipeline/${experiment.id}`, {
-    method: "POST",
-    headers: internalSecret ? { "x-pipeline-secret": internalSecret } : undefined,
-  }).catch(() => {});
+  triggerPipeline(siteUrl, experiment.id as string);
 
   return { ok: true, experimentId: experiment.id as string };
 }

@@ -1,6 +1,7 @@
 import { createAdminSupabase } from "@/lib/supabase-admin";
 import { runStep } from "@/lib/pipeline/run";
-import { PIPELINE_STEP_ORDER } from "@/lib/pipeline/types";
+import { parseFromStep, shouldPauseAfter, stepsFrom } from "@/lib/pipeline/schedule";
+import { pipelineOrigin, triggerPipeline } from "@/lib/pipeline/trigger";
 import { NextResponse } from "next/server";
 
 export async function POST(
@@ -19,12 +20,17 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const fromStep = parseFromStep(new URL(req.url).searchParams.get("from"));
+  if (!fromStep) {
+    return NextResponse.json({ error: "Invalid from step" }, { status: 400 });
+  }
+
   const { experimentId } = await params;
   const supabase = createAdminSupabase();
 
   const { data: experiment, error } = await supabase
     .from("experiments")
-    .select("id, org_id, prompt_text, cycle_number, active_hypothesis")
+    .select("id, org_id, prompt_text, cycle_number, active_hypothesis, status")
     .eq("id", experimentId)
     .single();
 
@@ -32,9 +38,24 @@ export async function POST(
     return NextResponse.json({ error: "Experiment not found" }, { status: 404 });
   }
 
+  // Resume-from-merge is only valid while we're actually waiting on that
+  // merge. A second GitHub delivery (or a stray trigger) after the pipeline
+  // has already continued must not re-run simulate_traffic / analyze.
+  if (fromStep === "create_flag") {
+    const { data: claimed } = await supabase
+      .from("experiments")
+      .update({ status: "running", current_step: fromStep })
+      .eq("id", experimentId)
+      .eq("status", "pr_open")
+      .select("id");
+    if (!claimed?.length) {
+      return NextResponse.json({ ok: true, skipped: true });
+    }
+  }
+
   const orgId = experiment.org_id as string;
 
-  for (const step of PIPELINE_STEP_ORDER) {
+  for (const step of stepsFrom(fromStep)) {
     await supabase
       .from("experiments")
       .update({ current_step: step, status: "running" })
@@ -80,6 +101,18 @@ export async function POST(
       return NextResponse.json({ error: result.message, step }, { status: 500 });
     }
 
+    // The variant isn't on the customer site until a human merges the PR.
+    // Stop here so simulate_traffic (and everything after) can't run against
+    // code nobody can actually hit. The GitHub merge webhook resumes from
+    // create_flag.
+    if (shouldPauseAfter(step)) {
+      await supabase
+        .from("experiments")
+        .update({ status: "pr_open", current_step: step })
+        .eq("id", experimentId);
+      return NextResponse.json({ ok: true, paused: "pr_open" });
+    }
+
     // After synthesize_next, loop back for cycle 2
     if (step === "synthesize_next" && result.nextHypothesis) {
       const nextCycle = ((experiment.cycle_number as number) ?? 1) + 1;
@@ -93,11 +126,7 @@ export async function POST(
         })
         .eq("id", experimentId);
 
-      // Kick off cycle 2 automatically
-      await fetch(
-        `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/pipeline/${experimentId}/loop`,
-        { method: "POST" },
-      );
+      triggerPipeline(pipelineOrigin(req), experimentId, "generate_diff");
       return NextResponse.json({ ok: true, looping: true });
     }
   }

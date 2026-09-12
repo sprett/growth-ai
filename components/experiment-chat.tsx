@@ -71,6 +71,9 @@ function stepMessage(step: PipelineStepName, status: StepCardStatus, progress: E
     return "";
   }
   if (status === "revealing") {
+    if (progress.status === "pr_open" && step === "create_flag") {
+      return "Waiting for the PR to merge…";
+    }
     return "Working…";
   }
 
@@ -125,10 +128,20 @@ function computeStepCards(progress: ExperimentProgress): StepCard[] {
         ? STEP_ORDER.length
         : 0;
 
+  const openPrIndex = STEP_ORDER.indexOf("open_pr");
+
   return STEP_ORDER.map((step, index) => {
     let cardStatus: StepCardStatus;
     if (status === "failed" && index === currentStepIndex) {
       cardStatus = "error";
+    } else if (status === "pr_open") {
+      if (index <= openPrIndex) {
+        cardStatus = "done";
+      } else if (step === "create_flag") {
+        cardStatus = "revealing";
+      } else {
+        cardStatus = "pending";
+      }
     } else if (status === "done" || status === "awaiting_loop" || index < currentStepIndex) {
       cardStatus = "done";
     } else if (index === currentStepIndex && status !== "failed") {
@@ -226,6 +239,14 @@ export function ExperimentChat({
         if (result.progress.status && TERMINAL_STATUSES.has(result.progress.status)) {
           stopPolling(experimentId);
           router.refresh();
+          continue;
+        }
+
+        // A human merge can take longer than MAX_POLL_ATTEMPTS — keep
+        // listening until the GitHub webhook resumes the pipeline.
+        if (result.progress.status === "pr_open") {
+          state.attempts = 0;
+          pollStateRef.current.set(experimentId, state);
           continue;
         }
 

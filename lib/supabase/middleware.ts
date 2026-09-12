@@ -40,7 +40,9 @@ export async function updateSession(request: NextRequest) {
     // and the pipeline would never run for anyone. Not reachable from the
     // browser's own nav (no UI links to it); route.ts itself uses the
     // service-role client and only trusts the (unguessable) experimentId.
-    pathname.startsWith("/api/pipeline");
+    pathname.startsWith("/api/pipeline") ||
+    // GitHub App merge events — signed with GITHUB_WEBHOOK_SECRET, no session.
+    pathname.startsWith("/api/github");
 
   if (!user && !isPublic) {
     const redirect = request.nextUrl.clone();
