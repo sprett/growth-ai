@@ -264,9 +264,6 @@ export function ExperimentChat({
 
     setError(null);
     setPending(true);
-    setDraft("");
-    setFiles([]);
-    setPreviews([]);
 
     const formData = new FormData();
     formData.set("prompt", prompt);
@@ -274,10 +271,18 @@ export function ExperimentChat({
     const result = await startExperiment(formData);
 
     if ("error" in result) {
+      // Leave the draft (and any attached images) in place — the user's
+      // wording is almost certainly what they still want to send, e.g. after
+      // a parse failure they just need to add a bit more detail, not retype
+      // the whole thing from scratch.
       setError(result.error);
       setPending(false);
       return;
     }
+
+    setDraft("");
+    setFiles([]);
+    setPreviews([]);
 
     // Every prompt starts its own experiment (its own hypothesis, PR, and
     // flag) — it is never a continuation of whatever chat happened to be

@@ -5,7 +5,7 @@ import {
   getActiveConnection,
 } from "@/lib/pipeline/connection";
 import { createAdminSupabase } from "@/lib/supabase-admin";
-import type { PipelineContext, StepResult } from "@/lib/pipeline/types";
+import type { PipelineContext, PipelineStepName, StepResult } from "@/lib/pipeline/types";
 import { getGithubClient } from "@/lib/github";
 import { applyExperimentSpec, buildPrBody, normalizeHypothesis, pickEntryField } from "@/lib/pipeline/auth-copy";
 import {
@@ -18,16 +18,64 @@ import { slugify } from "@/lib/utils";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-export async function parseRequest(
-  orgId: string,
-  experimentId: string,
-  context: PipelineContext,
-): Promise<StepResult> {
-  const { promptText, activeHypothesis } = context;
+/**
+ * Claude sometimes wraps the JSON in a code fence, or (when the prompt isn't
+ * a real UI-change request) replies with prose instead of JSON at all. Try a
+ * couple of ways to recover an object before giving up.
+ */
+function extractJsonObject(text: string): unknown {
+  const stripped = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    // fall through — maybe the JSON is embedded in surrounding prose
+  }
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    return JSON.parse(stripped.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
 
-  const prompt = activeHypothesis
-    ? `You are a UI experiment planner on cycle 2+. The previous winning hypothesis was: ${JSON.stringify(activeHypothesis)}. Build on it. Parse this new experiment request into a JSON object with fields: element (e.g. "cta_button"), dimension (e.g. "copy" | "color" | "placement"), variant_value (the proposed change). Request: "${promptText}". Reply with only the JSON object, no markdown.`
-    : `Parse this UI experiment request into a JSON object with exactly these fields: element (e.g. "cta_button"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Request: "${promptText}". Reply with only the JSON object, no markdown.`;
+/**
+ * Turns a model reply into a validated hypothesis, or throws an error with a
+ * message that's safe to show the user as-is. Raw model output (which can be
+ * a long, jargon-y explanation) is logged server-side for debugging but never
+ * put in the thrown message — step callers surface that message verbatim in
+ * the chat UI.
+ */
+function parseHypothesisReply(
+  text: string,
+  step: PipelineStepName,
+  friendlyMessage: string,
+): Record<string, string> {
+  const parsed = extractJsonObject(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    console.error(`[${step}] model reply was not a JSON object:`, text);
+    throw new Error(friendlyMessage);
+  }
+  try {
+    return normalizeHypothesis(parsed as Record<string, string>);
+  } catch {
+    console.error(`[${step}] model JSON missing required fields:`, text);
+    throw new Error(friendlyMessage);
+  }
+}
+
+const PARSE_FAILURE_MESSAGE = `Not quite enough to go on yet — what's the specific UI change you want to try? For example: "change the CTA button copy to 'Start free trial'".`;
+
+/**
+ * The plain (no prior hypothesis) parse prompt, factored out so
+ * startExperiment can run it before an experiment row even exists — see
+ * parseRequest below for why that matters.
+ */
+export async function parseHypothesisFromPrompt(
+  promptText: string,
+): Promise<{ ok: true; hypothesis: Record<string, string> } | { ok: false; message: string }> {
+  const prompt = `Parse this UI experiment request into a JSON object with exactly these fields: element (e.g. "cta_button"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Request: "${promptText}". Reply with only the JSON object, no markdown.`;
 
   const message = await anthropic.messages.create({
     model: "claude-opus-4-8",
@@ -37,15 +85,50 @@ export async function parseRequest(
 
   const text = message.content[0].type === "text" ? message.content[0].text.trim() : "";
 
-  let hypothesis: Record<string, string>;
   try {
-    hypothesis = JSON.parse(text);
-  } catch {
-    return {
-      step: "parse_request",
-      ok: false,
-      message: `Claude returned unparseable JSON: ${text}`,
-    };
+    return { ok: true, hypothesis: parseHypothesisReply(text, "parse_request", PARSE_FAILURE_MESSAGE) };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : PARSE_FAILURE_MESSAGE };
+  }
+}
+
+export async function parseRequest(
+  orgId: string,
+  experimentId: string,
+  context: PipelineContext,
+): Promise<StepResult> {
+  const { promptText, activeHypothesis, cycleNumber } = context;
+
+  let hypothesis: Record<string, string>;
+  if (cycleNumber === 1 && activeHypothesis) {
+    // startExperiment already ran parseHypothesisFromPrompt synchronously
+    // before this experiment (and this pipeline run) existed, so it could
+    // show a parse failure inline instead of creating a dead "experiment"
+    // for an unparseable first message. Reuse that result instead of
+    // spending a second, possibly-inconsistent Anthropic call on it.
+    hypothesis = activeHypothesis;
+  } else {
+    const prompt = activeHypothesis
+      ? `You are a UI experiment planner on cycle 2+. The previous winning hypothesis was: ${JSON.stringify(activeHypothesis)}. Build on it. Parse this new experiment request into a JSON object with fields: element (e.g. "cta_button"), dimension (e.g. "copy" | "color" | "placement"), variant_value (the proposed change). Request: "${promptText}". Reply with only the JSON object, no markdown.`
+      : `Parse this UI experiment request into a JSON object with exactly these fields: element (e.g. "cta_button"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Request: "${promptText}". Reply with only the JSON object, no markdown.`;
+
+    const message = await anthropic.messages.create({
+      model: "claude-opus-4-8",
+      max_tokens: 256,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = message.content[0].type === "text" ? message.content[0].text.trim() : "";
+
+    try {
+      hypothesis = parseHypothesisReply(text, "parse_request", PARSE_FAILURE_MESSAGE);
+    } catch (error) {
+      return {
+        step: "parse_request",
+        ok: false,
+        message: error instanceof Error ? error.message : "Could not parse the request.",
+      };
+    }
   }
 
   const supabase = createAdminSupabase();
@@ -460,12 +543,16 @@ Combine the winning insights into a new, more refined hypothesis. Reply with onl
 
   let nextHypothesis: Record<string, string>;
   try {
-    nextHypothesis = JSON.parse(text);
-  } catch {
+    nextHypothesis = parseHypothesisReply(
+      text,
+      "synthesize_next",
+      "Could not synthesize a valid next hypothesis from the playbook.",
+    );
+  } catch (error) {
     return {
       step: "synthesize_next",
       ok: false,
-      message: `Claude returned unparseable JSON: ${text}`,
+      message: error instanceof Error ? error.message : "Could not synthesize the next hypothesis.",
     };
   }
 

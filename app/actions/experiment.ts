@@ -1,6 +1,7 @@
 "use server";
 
 import { getOrgId } from "@/lib/org";
+import { parseHypothesisFromPrompt } from "@/lib/pipeline/steps";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -39,6 +40,15 @@ export async function startExperiment(
     return { error: "Not signed in" };
   }
 
+  // Parse before creating anything: a prompt that isn't a real UI-change
+  // request (e.g. "are you working?") shouldn't spawn a new sidebar chat
+  // that just shows a parse error — it should behave like any other
+  // composer validation error, so the user can just retype in place.
+  const parsed = await parseHypothesisFromPrompt(prompt);
+  if (!parsed.ok) {
+    return { error: parsed.message };
+  }
+
   const name =
     prompt.length > 72 ? `${prompt.slice(0, 69).trimEnd()}…` : prompt;
 
@@ -52,6 +62,7 @@ export async function startExperiment(
       prompt_text: prompt,
       status: "parsing",
       cycle_number: 1,
+      active_hypothesis: parsed.hypothesis,
       image_paths: imageCount > 0 ? [`${imageCount} attached`] : [],
     })
     .select("id")
