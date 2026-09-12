@@ -2,7 +2,7 @@
 
 import { isGithubConnected, toPublicConnection } from "@/lib/onboarding";
 import { getOrgId } from "@/lib/org";
-import { verifyPosthogAccess } from "@/lib/posthog/customer";
+import { verifyPosthogAccess, verifyPosthogProjectToken } from "@/lib/posthog/customer";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
@@ -42,18 +42,19 @@ export async function saveGithubInstallation(installationId: string) {
 
 export async function savePosthogConnection(formData: FormData) {
   const apiKey = String(formData.get("posthog_api_key") ?? "").trim();
+  const projectToken = String(formData.get("posthog_project_token") ?? "").trim();
   const projectId = String(formData.get("posthog_project_id") ?? "").trim();
   const host = String(formData.get("posthog_host") ?? "").trim();
 
-  if (!apiKey || !projectId || !host) {
-    return { error: "API key, project ID, and host are required." };
+  if (!apiKey || !projectToken || !projectId || !host) {
+    return { error: "Personal API key, project token, project ID, and host are all required." };
   }
 
   const { supabase, orgId } = await requireUser();
   const { data: existing } = await supabase
     .from("connections")
     .select(
-      "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_id, posthog_host",
+      "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_token, posthog_project_id, posthog_host",
     )
     .eq("org_id", orgId)
     .maybeSingle();
@@ -67,12 +68,18 @@ export async function savePosthogConnection(formData: FormData) {
     return { error: verified.error };
   }
 
+  const verifiedToken = await verifyPosthogProjectToken(host, projectToken);
+  if (!verifiedToken.ok) {
+    return { error: verifiedToken.error };
+  }
+
   const { error } = await supabase.from("connections").upsert(
     {
       org_id: orgId,
       github_installation_id: existing?.github_installation_id ?? null,
       github_repo_full_name: existing?.github_repo_full_name ?? null,
       posthog_api_key: apiKey,
+      posthog_project_token: projectToken,
       posthog_project_id: projectId,
       posthog_host: host,
     },
@@ -85,5 +92,50 @@ export async function savePosthogConnection(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath("/onboarding");
+  return { ok: true as const };
+}
+
+/**
+ * Lets an already-onboarded org add/rotate just the project token from
+ * Settings, without re-entering the personal API key, project ID, or host —
+ * those don't change independently, but the project token is easy to have
+ * skipped (it was added after the initial onboarding flow existed) or need
+ * to rotate on its own.
+ */
+export async function saveProjectToken(
+  formData: FormData,
+): Promise<{ error: string } | { ok: true }> {
+  const projectToken = String(formData.get("posthog_project_token") ?? "").trim();
+  if (!projectToken) {
+    return { error: "Project token is required." };
+  }
+
+  const { supabase, orgId } = await requireUser();
+  const { data: existing } = await supabase
+    .from("connections")
+    .select("posthog_host")
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (!existing?.posthog_host) {
+    return { error: "Finish Connect PostHog first." };
+  }
+
+  const verified = await verifyPosthogProjectToken(existing.posthog_host, projectToken);
+  if (!verified.ok) {
+    return { error: verified.error };
+  }
+
+  const { error } = await supabase
+    .from("connections")
+    .update({ posthog_project_token: projectToken })
+    .eq("org_id", orgId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/");
   return { ok: true as const };
 }

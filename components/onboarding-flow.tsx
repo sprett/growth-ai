@@ -12,7 +12,7 @@ import {
   isPosthogConnected,
   type PublicConnection,
 } from "@/lib/onboarding";
-import { POSTHOG_KEY_SCOPES, posthogSettingsUrl } from "@/lib/posthog/customer";
+import { POSTHOG_KEY_SCOPES, posthogProjectSettingsUrl, posthogSettingsUrl } from "@/lib/posthog/customer";
 import { cn } from "@/lib/utils";
 import { Check, ChevronDown } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -207,6 +207,33 @@ export function OnboardingFlow({
               placeholder="phx_…"
               className="border border-rule bg-paper px-3 py-2.5 outline-none focus:shadow-cta"
             />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="font-mono text-[11px] tracking-[0.16em] text-mute uppercase">
+              Project token
+            </span>
+            <input
+              name="posthog_project_token"
+              type="password"
+              required
+              autoComplete="off"
+              placeholder="phc_…"
+              className="border border-rule bg-paper px-3 py-2.5 outline-none focus:shadow-cta"
+            />
+            <span className="font-mono text-[11px] leading-relaxed text-mute">
+              Different from the personal key above — this is the public,
+              write-only token used to record synthetic experiment traffic.{" "}
+              <a
+                href={posthogProjectSettingsUrl(
+                  connection?.posthog_host ?? "https://eu.posthog.com",
+                )}
+                target="_blank"
+                rel="noreferrer"
+                className="underline-offset-4 hover:underline"
+              >
+                Open PostHog → Project settings
+              </a>
+            </span>
           </label>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5">

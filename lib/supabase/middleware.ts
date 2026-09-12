@@ -34,7 +34,13 @@ export async function updateSession(request: NextRequest) {
   const isPublic =
     pathname.startsWith("/login") ||
     pathname.startsWith("/auth") ||
-    pathname.startsWith("/invite");
+    pathname.startsWith("/invite") ||
+    // Server-to-server trigger from startExperiment's fire-and-forget fetch —
+    // it carries no cookies, so it would otherwise always redirect to /login
+    // and the pipeline would never run for anyone. Not reachable from the
+    // browser's own nav (no UI links to it); route.ts itself uses the
+    // service-role client and only trusts the (unguessable) experimentId.
+    pathname.startsWith("/api/pipeline");
 
   if (!user && !isPublic) {
     const redirect = request.nextUrl.clone();
