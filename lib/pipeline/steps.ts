@@ -7,14 +7,32 @@ import {
 import { createAdminSupabase } from "@/lib/supabase-admin";
 import type { PipelineContext, PipelineStepName, StepResult } from "@/lib/pipeline/types";
 import { getGithubClient } from "@/lib/github";
-import { applyExperimentSpec, buildPrBody, normalizeHypothesis, pickEntryField } from "@/lib/pipeline/auth-copy";
+import {
+  applyExperimentSpec,
+  buildPrBody,
+  isAuthPanelSpec,
+  normalizeHypothesis,
+  pickEntryField,
+  type NormalizedSpec,
+} from "@/lib/pipeline/auth-copy";
 import {
   AUTH_COPY_DEFAULT,
   AUTH_PANEL_ORIGINAL_SNAPSHOT,
   AUTH_PANEL_PATH,
   renderAuthPanelFile,
 } from "@/lib/pipeline/auth-panel-template";
+import {
+  buildFileEditPrompt,
+  extractJsonObject as extractFileEditJson,
+  parseFileEditReply,
+  rankCandidateFiles,
+  stripPlannedFileContent,
+  type PlannedEdit,
+} from "@/lib/pipeline/repo-edit";
 import { slugify } from "@/lib/utils";
+import type { GithubTarget } from "@/lib/github/types";
+
+const MAX_CANDIDATE_FILES = 12;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -75,7 +93,7 @@ const PARSE_FAILURE_MESSAGE = `Not quite enough to go on yet — what's the spec
 export async function parseHypothesisFromPrompt(
   promptText: string,
 ): Promise<{ ok: true; hypothesis: Record<string, string> } | { ok: false; message: string }> {
-  const prompt = `Parse this UI experiment request into a JSON object with exactly these fields: element (e.g. "cta_button"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Request: "${promptText}". Reply with only the JSON object, no markdown.`;
+  const prompt = `Parse this UI experiment request into a JSON object with exactly these fields: element (a snake_case id for whichever UI element the user named, e.g. "cta_button", "headline", "session_timer", "log_hours_cta"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Do not force the request onto an auth panel if the user named a different screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`;
 
   const message = await anthropic.messages.create({
     model: "claude-opus-4-8",
@@ -109,8 +127,8 @@ export async function parseRequest(
     hypothesis = activeHypothesis;
   } else {
     const prompt = activeHypothesis
-      ? `You are a UI experiment planner on cycle 2+. The previous winning hypothesis was: ${JSON.stringify(activeHypothesis)}. Build on it. Parse this new experiment request into a JSON object with fields: element (e.g. "cta_button"), dimension (e.g. "copy" | "color" | "placement"), variant_value (the proposed change). Request: "${promptText}". Reply with only the JSON object, no markdown.`
-      : `Parse this UI experiment request into a JSON object with exactly these fields: element (e.g. "cta_button"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Request: "${promptText}". Reply with only the JSON object, no markdown.`;
+      ? `You are a UI experiment planner on cycle 2+. The previous winning hypothesis was: ${JSON.stringify(activeHypothesis)}. Build on it. Parse this new experiment request into a JSON object with fields: element (a snake_case id for whichever UI element the user named, e.g. "cta_button", "headline", "session_timer"), dimension (e.g. "copy" | "color" | "placement"), variant_value (the proposed change). Do not force the request onto an auth panel if the user named a different screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`
+      : `Parse this UI experiment request into a JSON object with exactly these fields: element (a snake_case id for whichever UI element the user named, e.g. "cta_button", "headline", "session_timer", "log_hours_cta"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Do not force the request onto an auth panel if the user named a different screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`;
 
     const message = await anthropic.messages.create({
       model: "claude-opus-4-8",
@@ -151,30 +169,108 @@ export async function parseRequest(
   };
 }
 
+async function planExperimentEdit(
+  spec: NormalizedSpec,
+  promptText: string,
+  target: GithubTarget,
+): Promise<PlannedEdit> {
+  if (isAuthPanelSpec(spec)) {
+    const before = pickEntryField(AUTH_COPY_DEFAULT.signup, spec);
+    const nextBlock = applyExperimentSpec(AUTH_COPY_DEFAULT, spec);
+    return {
+      path: AUTH_PANEL_PATH,
+      before,
+      content: renderAuthPanelFile(nextBlock),
+    };
+  }
+
+  const client = getGithubClient();
+  const ranked = rankCandidateFiles(await client.listFilePaths(target), {
+    element: spec.element,
+    promptText,
+  });
+  const candidates = ranked.slice(0, MAX_CANDIDATE_FILES);
+  if (candidates.length === 0) {
+    throw new Error(
+      `Couldn't find a UI source file in ${target.repoFullName} to apply ${spec.element}/${spec.dimension}.`,
+    );
+  }
+
+  const files = (
+    await Promise.all(
+      candidates.map(async (path) => {
+        const content = await client.getFileContent(target, path);
+        return content === null ? null : { path, content };
+      }),
+    )
+  ).filter((file): file is { path: string; content: string } => file !== null);
+
+  if (files.length === 0) {
+    throw new Error(`Couldn't read candidate files from ${target.repoFullName}.`);
+  }
+
+  const message = await anthropic.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 16384,
+    messages: [{ role: "user", content: buildFileEditPrompt(spec, promptText, files) }],
+  });
+
+  const text = message.content[0].type === "text" ? message.content[0].text.trim() : "";
+  try {
+    return parseFileEditReply(
+      extractFileEditJson(text),
+      files.map((file) => file.path),
+    );
+  } catch {
+    console.error("[generate_diff] model file-edit reply was invalid:", text);
+    throw new Error(
+      `Couldn't apply ${spec.element}/${spec.dimension} to the connected repo. Try naming the screen or file more specifically.`,
+    );
+  }
+}
+
 export async function generateDiff(
   orgId: string,
-  _experimentId: string,
+  experimentId: string,
   context: PipelineContext,
 ): Promise<StepResult> {
   const connection = await getActiveConnection(orgId);
   const repo = assertGithubTarget(connection);
-  const { activeHypothesis } = context;
+  const { activeHypothesis, promptText } = context;
 
   if (!activeHypothesis) {
     return { step: "generate_diff", ok: false, message: "No active_hypothesis — run parse_request first." };
   }
+  if (!connection.github_installation_id) {
+    return { step: "generate_diff", ok: false, message: "connections.github_installation_id is empty" };
+  }
 
   try {
     const spec = normalizeHypothesis(activeHypothesis);
-    const before = pickEntryField(AUTH_COPY_DEFAULT.signup, spec);
-    // Validates the combination is one AuthPanel.tsx actually supports —
-    // throws before we ever try to open a PR for something we can't apply.
-    applyExperimentSpec(AUTH_COPY_DEFAULT, spec);
+    const planned = await planExperimentEdit(spec, promptText, {
+      installationId: connection.github_installation_id,
+      repoFullName: repo,
+      baseBranch: "main",
+    });
+
+    const supabase = createAdminSupabase();
+    await supabase
+      .from("experiments")
+      .update({
+        active_hypothesis: {
+          ...activeHypothesis,
+          ...spec,
+          file_path: planned.path,
+          before: planned.before,
+          file_content: planned.content,
+        },
+      })
+      .eq("id", experimentId);
 
     return {
       step: "generate_diff",
       ok: true,
-      message: `Prepared ${AUTH_PANEL_PATH} on ${repo}: ${spec.element}/${spec.dimension} "${before}" → "${spec.variant_value}".`,
+      message: `Prepared ${planned.path} on ${repo}: ${spec.element}/${spec.dimension} "${planned.before}" → "${spec.variant_value}".`,
     };
   } catch (error) {
     return {
@@ -203,10 +299,31 @@ export async function openPr(
 
   try {
     const spec = normalizeHypothesis(activeHypothesis);
-    const before = pickEntryField(AUTH_COPY_DEFAULT.signup, spec);
-    const nextBlock = applyExperimentSpec(AUTH_COPY_DEFAULT, spec);
-    const content = renderAuthPanelFile(nextBlock);
-    const prBody = buildPrBody(spec, before);
+    const plannedPath =
+      typeof activeHypothesis.file_path === "string" ? activeHypothesis.file_path : "";
+    const plannedContent =
+      typeof activeHypothesis.file_content === "string" ? activeHypothesis.file_content : "";
+    const plannedBefore =
+      typeof activeHypothesis.before === "string" ? activeHypothesis.before : "";
+
+    let path = plannedPath;
+    let content = plannedContent;
+    let before = plannedBefore;
+
+    if (!path || !content) {
+      if (!isAuthPanelSpec(spec)) {
+        return {
+          step: "open_pr",
+          ok: false,
+          message: "No planned file edit — run generate_diff first.",
+        };
+      }
+      before = pickEntryField(AUTH_COPY_DEFAULT.signup, spec);
+      content = renderAuthPanelFile(applyExperimentSpec(AUTH_COPY_DEFAULT, spec));
+      path = AUTH_PANEL_PATH;
+    }
+
+    const prBody = buildPrBody(spec, before || "(original)");
 
     const target = {
       installationId: connection.github_installation_id,
@@ -223,17 +340,22 @@ export async function openPr(
     // means someone else committed to it, and blindly PUTting our rendered
     // version would silently revert that work while looking like a
     // one-field copy change in the PR. Fail loudly instead.
-    const liveContent = await client.getFileContent(target, AUTH_PANEL_PATH);
-    const isKnownBaseline =
-      liveContent === null ||
-      liveContent === AUTH_PANEL_ORIGINAL_SNAPSHOT ||
-      liveContent === renderAuthPanelFile(AUTH_COPY_DEFAULT);
-    if (!isKnownBaseline) {
-      return {
-        step: "open_pr",
-        ok: false,
-        message: `${AUTH_PANEL_PATH} has diverged from the growth agent's known baseline (lib/pipeline/auth-panel-template.ts) — regenerate that template before opening another PR.`,
-      };
+    //
+    // Repo-wide (non-AuthPanel) edits are generated from the live file, so
+    // they skip this snapshot check.
+    if (path === AUTH_PANEL_PATH && isAuthPanelSpec(spec)) {
+      const liveContent = await client.getFileContent(target, AUTH_PANEL_PATH);
+      const isKnownBaseline =
+        liveContent === null ||
+        liveContent === AUTH_PANEL_ORIGINAL_SNAPSHOT ||
+        liveContent === renderAuthPanelFile(AUTH_COPY_DEFAULT);
+      if (!isKnownBaseline) {
+        return {
+          step: "open_pr",
+          ok: false,
+          message: `${AUTH_PANEL_PATH} has diverged from the growth agent's known baseline (lib/pipeline/auth-panel-template.ts) — regenerate that template before opening another PR.`,
+        };
+      }
     }
 
     const slug = slugify(spec.variant_value).slice(0, 32) || "variant";
@@ -245,7 +367,7 @@ export async function openPr(
       commitMessage: `Experiment: ${spec.element} ${spec.dimension} → ${spec.variant_value}`,
       prTitle: `Growth agent: ${spec.element} ${spec.dimension} experiment`,
       prBody,
-      files: [{ path: AUTH_PANEL_PATH, content }],
+      files: [{ path, content }],
     });
 
     const admin = createAdminSupabase();
@@ -256,6 +378,20 @@ export async function openPr(
       .update({ pr_url: result.prUrl })
       .eq("experiment_id", experimentId)
       .eq("label", "variant_b");
+
+    // Drop the full file body now that the PR is open — later steps
+    // (synthesize_next) stringify active_hypothesis into an LLM prompt.
+    await admin
+      .from("experiments")
+      .update({
+        active_hypothesis: stripPlannedFileContent({
+          ...activeHypothesis,
+          ...spec,
+          file_path: path,
+          before,
+        }),
+      })
+      .eq("id", experimentId);
 
     return {
       step: "open_pr",
@@ -555,7 +691,11 @@ Playbook (past winners):
 ${playbookSummary}
 
 Original prompt: "${experiment?.prompt_text}"
-Last hypothesis: ${JSON.stringify(experiment?.active_hypothesis)}
+Last hypothesis: ${JSON.stringify(
+            experiment?.active_hypothesis
+              ? stripPlannedFileContent(experiment.active_hypothesis as Record<string, unknown>)
+              : null,
+          )}
 
 Combine the winning insights into a new, more refined hypothesis. Reply with only a JSON object: { element, dimension, variant_value }. No markdown.`,
       },

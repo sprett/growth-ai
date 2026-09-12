@@ -37,6 +37,16 @@ function fieldFor(spec: Pick<NormalizedSpec, "element" | "dimension">): keyof Au
   );
 }
 
+/** True when the spec maps onto the AuthPanel snapshot (CTA / headline / tagline). */
+export function isAuthPanelSpec(spec: Pick<NormalizedSpec, "element" | "dimension">): boolean {
+  try {
+    fieldFor(spec);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeHypothesis(raw: Record<string, string>): NormalizedSpec {
   const element = raw.element;
   const dimension = raw.dimension;

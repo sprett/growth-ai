@@ -75,7 +75,7 @@ function stepMessage(step: PipelineStepName, status: StepCardStatus, progress: E
   }
 
   const hypothesis = progress.activeHypothesis as
-    | { element?: string; dimension?: string; variant_value?: string }
+    | { element?: string; dimension?: string; variant_value?: string; file_path?: string }
     | null;
 
   if (status === "error") {
@@ -88,9 +88,11 @@ function stepMessage(step: PipelineStepName, status: StepCardStatus, progress: E
         ? `Parsed as ${hypothesis.element}/${hypothesis.dimension} → "${hypothesis.variant_value}"`
         : "Parsed the request.";
     case "generate_diff":
-      return hypothesis?.element
-        ? `Prepared frontend/src/AuthPanel.tsx with ${hypothesis.element}/${hypothesis.dimension} set to "${hypothesis.variant_value}".`
-        : "Prepared the diff.";
+      return hypothesis?.file_path
+        ? `Prepared ${hypothesis.file_path} with ${hypothesis.element}/${hypothesis.dimension} set to "${hypothesis.variant_value}".`
+        : hypothesis?.element
+          ? `Prepared a code change for ${hypothesis.element}/${hypothesis.dimension} → "${hypothesis.variant_value}".`
+          : "Prepared the diff.";
     case "open_pr": {
       const prUrl = progress.variants.find((variant) => variant.pr_url)?.pr_url;
       return prUrl ? `Opened ${prUrl}` : "Opened a pull request.";
@@ -107,8 +109,10 @@ function stepMessage(step: PipelineStepName, status: StepCardStatus, progress: E
       return "Updated the playbook.";
     case "synthesize_next":
       return "Synthesized the next hypothesis.";
-    default:
-      return "Done.";
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
   }
 }
 

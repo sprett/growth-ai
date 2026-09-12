@@ -68,6 +68,22 @@ export function createOctokitGithubClient(): GithubClient {
       }
     },
 
+    async listFilePaths(target: GithubTarget): Promise<string[]> {
+      const octokit = await getInstallationOctokit(target.installationId);
+      const { owner, repo } = splitRepoFullName(target.repoFullName);
+
+      const { data } = await octokit.request("GET /repos/{owner}/{repo}/git/trees/{tree_sha}", {
+        owner,
+        repo,
+        tree_sha: target.baseBranch,
+        recursive: "true",
+      });
+
+      return (data.tree ?? [])
+        .filter((entry) => entry.type === "blob" && typeof entry.path === "string")
+        .map((entry) => entry.path as string);
+    },
+
     async openPullRequest(input: OpenPrInput): Promise<OpenPrResult> {
       const octokit = await getInstallationOctokit(input.target.installationId);
       const { owner, repo } = splitRepoFullName(input.target.repoFullName);

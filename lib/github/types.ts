@@ -25,4 +25,6 @@ export interface GithubClient {
   openPullRequest(input: OpenPrInput): Promise<OpenPrResult>;
   /** Returns null if the file doesn't exist at that ref (a new file). */
   getFileContent(target: GithubTarget, path: string): Promise<string | null>;
+  /** Blob paths at the target's base branch (recursive tree). */
+  listFilePaths(target: GithubTarget): Promise<string[]>;
 }

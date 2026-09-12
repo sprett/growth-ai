@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { AUTH_COPY_DEFAULT } from "@/lib/pipeline/auth-panel-template";
-import { applyExperimentSpec, buildPrBody, normalizeHypothesis, pickEntryField } from "@/lib/pipeline/auth-copy";
+import {
+  applyExperimentSpec,
+  buildPrBody,
+  isAuthPanelSpec,
+  normalizeHypothesis,
+  pickEntryField,
+} from "@/lib/pipeline/auth-copy";
 
 describe("normalizeHypothesis", () => {
   it("accepts a well-formed hypothesis", () => {
@@ -48,10 +54,15 @@ describe("applyExperimentSpec / pickEntryField", () => {
     expect(tagline.signup.tagline).toBe("Kom i gang på ti sekunder.");
   });
 
-  it("throws on an unsupported combination", () => {
+  it("throws on an unsupported AuthPanel combination", () => {
     expect(() =>
       applyExperimentSpec(AUTH_COPY_DEFAULT, { element: "footer", dimension: "placement", variant_value: "x" }),
     ).toThrow(/Unsupported combination/);
+  });
+
+  it("identifies AuthPanel specs without treating other screens as AuthPanel", () => {
+    expect(isAuthPanelSpec({ element: "cta_button", dimension: "copy" })).toBe(true);
+    expect(isAuthPanelSpec({ element: "session_timer", dimension: "copy" })).toBe(false);
   });
 
   it("pickEntryField reads the same field applyExperimentSpec would write", () => {
