@@ -6,6 +6,7 @@ export type Connection = {
   github_installation_id: string | null;
   github_repo_full_name: string | null;
   posthog_api_key: string | null;
+  posthog_project_token: string | null;
   posthog_project_id: string | null;
   posthog_host: string | null;
 };

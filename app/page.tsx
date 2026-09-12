@@ -38,7 +38,7 @@ export default async function DashboardPage({
   const { data: connectionRow } = await supabase
     .from("connections")
     .select(
-      "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_id, posthog_host",
+      "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_token, posthog_project_id, posthog_host",
     )
     .eq("org_id", orgId)
     .maybeSingle();

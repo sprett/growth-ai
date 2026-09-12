@@ -6,7 +6,7 @@ export async function getActiveConnection(orgId: string): Promise<Connection> {
   const { data, error } = await supabase
     .from("connections")
     .select(
-      "id, org_id, github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_id, posthog_host",
+      "id, org_id, github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_token, posthog_project_id, posthog_host",
     )
     .eq("org_id", orgId)
     .single();
@@ -29,11 +29,13 @@ export function assertGithubTarget(connection: Connection): string {
 
 export function assertPosthogTarget(connection: Connection): {
   apiKey: string;
+  projectToken: string;
   projectId: string;
   host: string;
 } {
   if (
     !connection.posthog_api_key ||
+    !connection.posthog_project_token ||
     !connection.posthog_project_id ||
     !connection.posthog_host
   ) {
@@ -44,6 +46,7 @@ export function assertPosthogTarget(connection: Connection): {
 
   return {
     apiKey: connection.posthog_api_key,
+    projectToken: connection.posthog_project_token,
     projectId: connection.posthog_project_id,
     host: connection.posthog_host,
   };

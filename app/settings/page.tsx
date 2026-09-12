@@ -1,4 +1,5 @@
 import { GithubMark, PosthogMark } from "@/components/brand-icon";
+import { ProjectTokenForm } from "@/components/project-token-form";
 import { StudioHeader, Ticket } from "@/components/studio-header";
 import { TeamCard } from "@/components/team-card";
 import {
@@ -24,7 +25,7 @@ export default async function SettingsPage() {
   const { data } = await supabase
     .from("connections")
     .select(
-      "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_id, posthog_host",
+      "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_token, posthog_project_id, posthog_host",
     )
     .eq("org_id", orgId)
     .maybeSingle();
@@ -82,6 +83,13 @@ export default async function SettingsPage() {
           </div>
         </Ticket>
       </div>
+
+      <Ticket className="mb-4">
+        <ProjectTokenForm
+          host={connection?.posthog_host ?? null}
+          tokenSet={connection?.posthog_project_token_set ?? false}
+        />
+      </Ticket>
 
       <TeamCard
         teammates={teammates}

@@ -366,18 +366,31 @@ export async function simulateTraffic(
     })),
   );
 
-  // PostHog batch endpoint
-  const res = await fetch(`${posthog.host}/batch/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      api_key: posthog.apiKey,
-      batch: events,
-    }),
-  });
-
-  if (!res.ok) {
-    return { step: "simulate_traffic", ok: false, message: `PostHog batch error: ${await res.text()}` };
+  // Best-effort push to the customer's own PostHog project, purely so the
+  // flag shows live-looking traffic there — analyzeResults reads only the
+  // local aggregate rows written below, so a network blip or PostHog outage
+  // here shouldn't strand an experiment that already has a real PR and flag.
+  // Note this uses posthog.projectToken (the public, write-only ingestion
+  // token), never posthog.apiKey (the personal key) — /batch/ rejects the
+  // personal key outright ("API key is not valid: personal_api_key").
+  let posthogPushError: string | null = null;
+  try {
+    const res = await fetch(`${posthog.host}/batch/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: posthog.projectToken,
+        batch: events,
+      }),
+    });
+    if (!res.ok) {
+      posthogPushError = await res.text();
+    }
+  } catch (error) {
+    posthogPushError = error instanceof Error ? error.message : "network error";
+  }
+  if (posthogPushError) {
+    console.error(`[simulate_traffic] PostHog batch push failed:`, posthogPushError);
   }
 
   // Write aggregate counts to events table (org_id required by schema)
@@ -398,7 +411,9 @@ export async function simulateTraffic(
   return {
     step: "simulate_traffic",
     ok: true,
-    message: `Fired ${events.length} synthetic events.`,
+    message: posthogPushError
+      ? `Recorded ${events.length} synthetic events (PostHog project capture skipped — check connections.posthog_project_token).`
+      : `Fired ${events.length} synthetic events.`,
   };
 }
 

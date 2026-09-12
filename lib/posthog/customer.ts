@@ -25,6 +25,11 @@ export function posthogSettingsUrl(host: string): string {
   return `${posthogAppHost(host)}/settings/user-api-keys`;
 }
 
+/** Project API Key lives under Project settings, not User settings. */
+export function posthogProjectSettingsUrl(host: string): string {
+  return `${posthogAppHost(host)}/settings/project`;
+}
+
 export async function posthogRequest(
   target: PosthogTarget,
   path: string,
@@ -42,7 +47,7 @@ export async function posthogRequest(
   });
 }
 
-async function readPosthogError(response: Response): Promise<string> {
+export async function readPosthogError(response: Response): Promise<string> {
   const text = await response.text();
   try {
     const json = JSON.parse(text) as { detail?: unknown; error?: unknown };
@@ -88,5 +93,29 @@ export async function verifyPosthogAccess(
     };
   }
 
+  return { ok: true };
+}
+
+/**
+ * The project API key (used by simulate_traffic's /batch/ push) is a
+ * different credential from the personal key above — verified separately,
+ * against PostHog's /decide/ endpoint (read-only: it just resolves flags for
+ * a key, so this doesn't write fake events into the customer's project the
+ * way a real /batch/ call would).
+ */
+export async function verifyPosthogProjectToken(
+  host: string,
+  projectToken: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const base = posthogAppHost(host);
+  const res = await fetch(`${base}/decide/?v=3`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: projectToken }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    return { ok: false, error: `Could not verify the project API key (${await readPosthogError(res)}).` };
+  }
   return { ok: true };
 }
