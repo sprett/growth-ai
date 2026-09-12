@@ -3,6 +3,25 @@
 import { getOrgId } from "@/lib/org";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
+
+/**
+ * Derives the origin to call our own /api/pipeline route on, from the
+ * incoming request's own Host header rather than a hardcoded env default —
+ * NEXT_PUBLIC_SITE_URL (or the "http://localhost:3000" fallback) silently
+ * points at the wrong port whenever the dev server actually runs on a
+ * different one (e.g. 3000 already in use), and the fire-and-forget fetch
+ * below fails silently against a dead endpoint with no visible error.
+ */
+async function resolveSiteOrigin(): Promise<string> {
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return process.env.NEXT_PUBLIC_SITE_URL;
+  }
+  const headerList = await headers();
+  const host = headerList.get("host");
+  const proto = headerList.get("x-forwarded-proto") ?? (host?.includes("localhost") ? "http" : "https");
+  return host ? `${proto}://${host}` : "http://localhost:3000";
+}
 
 export async function startExperiment(
   formData: FormData,
@@ -47,7 +66,7 @@ export async function startExperiment(
   // Fire-and-forget — do not await, returns immediately to the UI. Carries no
   // user cookies (server-to-server), so the route is authorized by a shared
   // secret instead of a session — see PIPELINE_INTERNAL_SECRET.
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const siteUrl = await resolveSiteOrigin();
   const internalSecret = process.env.PIPELINE_INTERNAL_SECRET;
   fetch(`${siteUrl}/api/pipeline/${experiment.id}`, {
     method: "POST",
