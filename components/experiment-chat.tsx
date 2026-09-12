@@ -144,6 +144,7 @@ export function ExperimentChat({
 }) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
@@ -244,6 +245,17 @@ export function ExperimentChat({
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [activePolls.length, router]);
+
+  // Auto-grow the composer as the draft gains/loses lines. Reset to "auto"
+  // first so deleting a line shrinks it back down — scrollHeight only ever
+  // grows if the height isn't cleared before re-measuring. The max-h-32 CSS
+  // class caps it; the textarea's native overflow takes over past that.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -415,6 +427,7 @@ export function ExperimentChat({
             <ImagePlus className="size-4" strokeWidth={1.75} />
           </button>
           <textarea
+            ref={textareaRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -425,7 +438,7 @@ export function ExperimentChat({
             }}
             rows={1}
             placeholder="I want to try a different CTA copy on the signup screen…"
-            className="max-h-32 min-h-8 flex-1 resize-none bg-transparent py-1.5 text-[14px] outline-none"
+            className="max-h-32 min-h-8 flex-1 resize-none overflow-y-auto bg-transparent py-1.5 text-[14px] outline-none"
           />
           <button
             type="submit"
