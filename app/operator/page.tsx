@@ -47,7 +47,7 @@ export default async function PipelinePage() {
       {error ? (
         <p className="m-0 font-mono text-sm text-mute">{error.message}</p>
       ) : experiments.length === 0 ? (
-        <p className="m-0 text-mute">No experiments yet. Chat lands on the dashboard next.</p>
+        <p className="m-0 text-mute">No experiments yet. Start one from the chat on the dashboard.</p>
       ) : (
         <ul className="m-0 list-none border-t border-ink/20 p-0">
           {experiments.map((experiment) => (

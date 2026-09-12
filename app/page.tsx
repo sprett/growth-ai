@@ -1,4 +1,5 @@
 import { GithubMark, PosthogMark } from "@/components/brand-icon";
+import { ExperimentChat } from "@/components/experiment-chat";
 import { StudioHeader, Ticket } from "@/components/studio-header";
 import { TeamCard } from "@/components/team-card";
 import {
@@ -8,8 +9,6 @@ import {
 } from "@/lib/onboarding";
 import { getOrgId, listTeammates } from "@/lib/org";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { MessageSquareText } from "lucide-react";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 export default async function DashboardPage() {
@@ -49,8 +48,8 @@ export default async function DashboardPage() {
           Dashboard
         </h1>
         <p className="mt-3 mb-0 text-lg leading-relaxed">
-          GitHub and PostHog are wired. The chat studio — describe an
-          experiment, get a PR and a flag — is next.
+          Describe an experiment below — the agent opens a PR on {repo} and
+          writes a feature flag in this PostHog project.
         </p>
       </header>
 
@@ -85,27 +84,8 @@ export default async function DashboardPage() {
         className="mb-4"
       />
 
-      <Ticket className="rise-delay-2 flex flex-col items-start gap-4 p-6 sm:p-8">
-        <span className="grid size-11 place-items-center border border-rule">
-          <MessageSquareText className="size-5" strokeWidth={1.6} />
-        </span>
-        <div>
-          <h2 className="m-0 font-display text-2xl font-bold tracking-tight">
-            Chat comes next
-          </h2>
-          <p className="mt-2 mb-0 leading-relaxed text-mute">
-            You&apos;ll type a hypothesis in plain language. The agent will
-            open a PR on {repo} and write a feature flag in this PostHog
-            project. We only store variant counts — never visitor-level
-            events.
-          </p>
-        </div>
-        <Link
-          href="/operator"
-          className="font-mono text-[11px] tracking-[0.12em] text-mute uppercase underline-offset-4 hover:underline"
-        >
-          Peek at the pipeline →
-        </Link>
+      <Ticket className="rise-delay-2">
+        <ExperimentChat />
       </Ticket>
     </div>
   );
