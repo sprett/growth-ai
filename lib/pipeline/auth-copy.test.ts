@@ -6,6 +6,7 @@ import {
   isAuthPanelSpec,
   normalizeHypothesis,
   pickEntryField,
+  shouldUseAuthPanelTemplate,
 } from "@/lib/pipeline/auth-copy";
 
 describe("normalizeHypothesis", () => {
@@ -63,6 +64,36 @@ describe("applyExperimentSpec / pickEntryField", () => {
   it("identifies AuthPanel specs without treating other screens as AuthPanel", () => {
     expect(isAuthPanelSpec({ element: "cta_button", dimension: "copy" })).toBe(true);
     expect(isAuthPanelSpec({ element: "session_timer", dimension: "copy" })).toBe(false);
+  });
+
+  it("only uses the AuthPanel template when the request is actually about auth", () => {
+    const cta = { element: "cta_button", dimension: "copy" };
+    expect(
+      shouldUseAuthPanelTemplate(cta, "Change the signup CTA copy to Start free trial"),
+    ).toBe(true);
+    expect(shouldUseAuthPanelTemplate({ element: "signup_cta_button", dimension: "copy" }, "Kom i gang")).toBe(
+      true,
+    );
+    expect(
+      shouldUseAuthPanelTemplate(
+        cta,
+        "On the log hours screen, change the primary CTA from Logg økt to Start session",
+      ),
+    ).toBe(false);
+    expect(shouldUseAuthPanelTemplate({ element: "session_timer", dimension: "copy" }, "Keep going")).toBe(
+      false,
+    );
+  });
+
+  it("does not treat a log-hours request as auth just because it says not to touch AuthPanel", () => {
+    const prompt = `On the Logg timer / log hours screen, change the primary session CTA.
+
+Current: the big blue button says "Logg økt".
+Change that copy to "Start session".
+
+Copy only — do not touch AuthPanel, signup, or the dashboard.`;
+    expect(shouldUseAuthPanelTemplate({ element: "cta_button", dimension: "copy" }, prompt)).toBe(false);
+    expect(shouldUseAuthPanelTemplate({ element: "signup_cta", dimension: "copy" }, prompt)).toBe(false);
   });
 
   it("pickEntryField reads the same field applyExperimentSpec would write", () => {

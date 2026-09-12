@@ -47,6 +47,65 @@ export function isAuthPanelSpec(spec: Pick<NormalizedSpec, "element" | "dimensio
   }
 }
 
+const AUTH_SCREEN_HINTS = [
+  "authpanel",
+  "auth panel",
+  "auth_panel",
+  "signin",
+  "sign_in",
+  "sign-in",
+  "sign in",
+  "signup",
+  "sign_up",
+  "sign-up",
+  "sign up",
+  "login",
+  "log in",
+  "logg inn",
+  "opprett konto",
+];
+
+const OTHER_SCREEN_HINTS = [
+  "log hours",
+  "loghours",
+  "logg timer",
+  "logg økt",
+  "logg studie",
+  "dashboard",
+  "subjects",
+  "session timer",
+  "session_timer",
+  "fag-siden",
+];
+
+export function mentionsAuthScreen(text: string): boolean {
+  const hay = text.toLowerCase();
+  return AUTH_SCREEN_HINTS.some((hint) => hay.includes(hint));
+}
+
+export function mentionsOtherScreen(text: string): boolean {
+  const hay = text.toLowerCase();
+  return OTHER_SCREEN_HINTS.some((hint) => hay.includes(hint));
+}
+
+/**
+ * AuthPanel has a CTA/headline/tagline, but so do dashboard and log-hours.
+ * Only rewrite the AuthPanel snapshot when the request is actually about
+ * sign-in / sign-up — otherwise generateDiff must look at the live repo.
+ *
+ * Naming another screen (log hours, dashboard, …) always wins, even if the
+ * prompt also says "don't touch AuthPanel/signup" — those words used to
+ * false-trigger the AuthPanel shortcut.
+ */
+export function shouldUseAuthPanelTemplate(
+  spec: Pick<NormalizedSpec, "element" | "dimension">,
+  promptText: string,
+): boolean {
+  if (!isAuthPanelSpec(spec)) return false;
+  if (mentionsOtherScreen(promptText)) return false;
+  return mentionsAuthScreen(promptText) || mentionsAuthScreen(spec.element);
+}
+
 export function normalizeHypothesis(raw: Record<string, string>): NormalizedSpec {
   const element = raw.element;
   const dimension = raw.dimension;

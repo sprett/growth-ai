@@ -41,7 +41,7 @@ describe("rankCandidateFiles", () => {
     });
     expect(ranked[0]).toBe("frontend/src/pages/loghours.tsx");
     expect(ranked).not.toContain("frontend/Student_App/frontend/src/utils/streak.ts");
-    expect(ranked).toContain("frontend/src/AuthPanel.tsx");
+    expect(ranked).not.toContain("frontend/src/AuthPanel.tsx");
   });
 
   it("still returns UI files even when the element name matches none of them", () => {
@@ -51,6 +51,23 @@ describe("rankCandidateFiles", () => {
     });
     expect(ranked).toContain("frontend/src/pages/loghours.tsx");
     expect(ranked.length).toBeGreaterThan(0);
+  });
+
+  it("does not default a generic CTA copy change to AuthPanel", () => {
+    const ranked = rankCandidateFiles(STUDENT_APP_FILES, {
+      element: "cta_button",
+      promptText: "On the log hours screen, change the primary CTA from Logg økt to Start session",
+    });
+    expect(ranked[0]).toBe("frontend/src/pages/loghours.tsx");
+    expect(ranked).not.toContain("frontend/src/AuthPanel.tsx");
+  });
+
+  it("keeps AuthPanel for an actual signup request", () => {
+    const ranked = rankCandidateFiles(STUDENT_APP_FILES, {
+      element: "signup_cta",
+      promptText: "Change the signup CTA copy to Start free trial",
+    });
+    expect(ranked[0]).toBe("frontend/src/AuthPanel.tsx");
   });
 });
 

@@ -1,4 +1,4 @@
-import type { NormalizedSpec } from "@/lib/pipeline/auth-copy";
+import { mentionsAuthScreen, mentionsOtherScreen, type NormalizedSpec } from "@/lib/pipeline/auth-copy";
 
 export type PlannedEdit = {
   path: string;
@@ -67,8 +67,16 @@ export function rankCandidateFiles(
   input: { element: string; promptText?: string },
 ): string[] {
   const tokens = [...new Set([...tokenize(input.element), ...tokenize(input.promptText ?? "")])];
+  const promptAndElement = `${input.promptText ?? ""} ${input.element}`;
+  const wantsAuth = mentionsAuthScreen(promptAndElement) && !mentionsOtherScreen(input.promptText ?? "");
   return selectUiSourceFiles(paths)
-    .map((path) => ({ path, score: scorePath(path, tokens) }))
+    .filter((path) => wantsAuth || !/authpanel|login|signin/i.test(path))
+    .map((path) => {
+      let score = scorePath(path, tokens);
+      const isAuthFile = /authpanel|login|signin/i.test(path);
+      if (isAuthFile && wantsAuth) score += 30;
+      return { path, score };
+    })
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
     .map((entry) => entry.path);
 }
@@ -147,6 +155,8 @@ Candidate source files (path + current contents):
 ${fileBlocks}
 
 Pick exactly one of those files and apply the smallest change that implements the hypothesis.
+The app has several screens (dashboard, subjects, log hours, auth). Edit the screen the user named.
+Do not modify AuthPanel.tsx unless the request is about sign-in, sign-up, or login.
 Keep every other line identical. Do not refactor, rename, or reformat unrelated code.
 
 Reply with ONLY a JSON object, no markdown:

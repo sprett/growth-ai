@@ -10,9 +10,9 @@ import { getGithubClient } from "@/lib/github";
 import {
   applyExperimentSpec,
   buildPrBody,
-  isAuthPanelSpec,
   normalizeHypothesis,
   pickEntryField,
+  shouldUseAuthPanelTemplate,
   type NormalizedSpec,
 } from "@/lib/pipeline/auth-copy";
 import {
@@ -83,7 +83,7 @@ function parseHypothesisReply(
   }
 }
 
-const PARSE_FAILURE_MESSAGE = `Not quite enough to go on yet — what's the specific UI change you want to try? For example: "change the CTA button copy to 'Start free trial'".`;
+const PARSE_FAILURE_MESSAGE = `Not quite enough to go on yet — name the screen and the exact change. For example: "on the log hours page, change the Logg økt button to 'Start session'".`;
 
 /**
  * The plain (no prior hypothesis) parse prompt, factored out so
@@ -93,7 +93,7 @@ const PARSE_FAILURE_MESSAGE = `Not quite enough to go on yet — what's the spec
 export async function parseHypothesisFromPrompt(
   promptText: string,
 ): Promise<{ ok: true; hypothesis: Record<string, string> } | { ok: false; message: string }> {
-  const prompt = `Parse this UI experiment request into a JSON object with exactly these fields: element (a snake_case id for whichever UI element the user named, e.g. "cta_button", "headline", "session_timer", "log_hours_cta"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Do not force the request onto an auth panel if the user named a different screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`;
+  const prompt = `Parse this UI experiment request into a JSON object with exactly these fields: element (snake_case id that includes the screen AND the control, e.g. "log_hours_cta", "dashboard_headline"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Do not map the request onto AuthPanel / signup / login unless the user asked to change the sign-in or sign-up screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`;
 
   const message = await anthropic.messages.create({
     model: "claude-opus-4-8",
@@ -127,8 +127,8 @@ export async function parseRequest(
     hypothesis = activeHypothesis;
   } else {
     const prompt = activeHypothesis
-      ? `You are a UI experiment planner on cycle 2+. The previous winning hypothesis was: ${JSON.stringify(activeHypothesis)}. Build on it. Parse this new experiment request into a JSON object with fields: element (a snake_case id for whichever UI element the user named, e.g. "cta_button", "headline", "session_timer"), dimension (e.g. "copy" | "color" | "placement"), variant_value (the proposed change). Do not force the request onto an auth panel if the user named a different screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`
-      : `Parse this UI experiment request into a JSON object with exactly these fields: element (a snake_case id for whichever UI element the user named, e.g. "cta_button", "headline", "session_timer", "log_hours_cta"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Do not force the request onto an auth panel if the user named a different screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`;
+      ? `You are a UI experiment planner on cycle 2+. The previous winning hypothesis was: ${JSON.stringify(activeHypothesis)}. Build on it. Parse this new experiment request into a JSON object with fields: element (snake_case id that includes the screen AND the control, e.g. "log_hours_cta", "dashboard_headline"), dimension (e.g. "copy" | "color" | "placement"), variant_value (the proposed change). Do not map the request onto AuthPanel / signup / login unless the user asked to change the sign-in or sign-up screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`
+      : `Parse this UI experiment request into a JSON object with exactly these fields: element (snake_case id that includes the screen AND the control, e.g. "log_hours_cta", "dashboard_headline"), dimension ("copy" | "color" | "placement"), variant_value (the proposed change value). Do not map the request onto AuthPanel / signup / login unless the user asked to change the sign-in or sign-up screen. Request: "${promptText}". Reply with only the JSON object, no markdown.`;
 
     const message = await anthropic.messages.create({
       model: "claude-opus-4-8",
@@ -174,7 +174,7 @@ async function planExperimentEdit(
   promptText: string,
   target: GithubTarget,
 ): Promise<PlannedEdit> {
-  if (isAuthPanelSpec(spec)) {
+  if (shouldUseAuthPanelTemplate(spec, promptText)) {
     const before = pickEntryField(AUTH_COPY_DEFAULT.signup, spec);
     const nextBlock = applyExperimentSpec(AUTH_COPY_DEFAULT, spec);
     return {
@@ -203,7 +203,9 @@ async function planExperimentEdit(
         return content === null ? null : { path, content };
       }),
     )
-  ).filter((file): file is { path: string; content: string } => file !== null);
+  )
+    .filter((file): file is { path: string; content: string } => file !== null)
+    .filter((file) => shouldUseAuthPanelTemplate(spec, promptText) || !/authpanel/i.test(file.path));
 
   if (files.length === 0) {
     throw new Error(`Couldn't read candidate files from ${target.repoFullName}.`);
@@ -217,10 +219,14 @@ async function planExperimentEdit(
 
   const text = message.content[0].type === "text" ? message.content[0].text.trim() : "";
   try {
-    return parseFileEditReply(
+    const edit = parseFileEditReply(
       extractFileEditJson(text),
       files.map((file) => file.path),
     );
+    if (/authpanel/i.test(edit.path) && !shouldUseAuthPanelTemplate(spec, promptText)) {
+      throw new Error("Refusing to edit AuthPanel for a non-auth request.");
+    }
+    return edit;
   } catch {
     console.error("[generate_diff] model file-edit reply was invalid:", text);
     throw new Error(
@@ -288,7 +294,7 @@ export async function openPr(
 ): Promise<StepResult> {
   const connection = await getActiveConnection(orgId);
   const repo = assertGithubTarget(connection);
-  const { activeHypothesis, cycleNumber } = context;
+  const { activeHypothesis, cycleNumber, promptText } = context;
 
   if (!activeHypothesis) {
     return { step: "open_pr", ok: false, message: "No active_hypothesis — run parse_request first." };
@@ -311,7 +317,7 @@ export async function openPr(
     let before = plannedBefore;
 
     if (!path || !content) {
-      if (!isAuthPanelSpec(spec)) {
+      if (!shouldUseAuthPanelTemplate(spec, promptText)) {
         return {
           step: "open_pr",
           ok: false,
@@ -343,7 +349,7 @@ export async function openPr(
     //
     // Repo-wide (non-AuthPanel) edits are generated from the live file, so
     // they skip this snapshot check.
-    if (path === AUTH_PANEL_PATH && isAuthPanelSpec(spec)) {
+    if (path === AUTH_PANEL_PATH && shouldUseAuthPanelTemplate(spec, promptText)) {
       const liveContent = await client.getFileContent(target, AUTH_PANEL_PATH);
       const isKnownBaseline =
         liveContent === null ||
