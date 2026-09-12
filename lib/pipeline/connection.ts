@@ -28,8 +28,8 @@ export function assertGithubTarget(connection: Connection): string {
 }
 
 export function assertPosthogTarget(connection: Connection): {
-  apiKey: string;
-  projectToken: string;
+  apiKey: string;       // personal key (phx_) for management API
+  projectToken: string; // project token (phc_) for event capture
   projectId: string;
   host: string;
 } {
@@ -48,6 +48,6 @@ export function assertPosthogTarget(connection: Connection): {
     apiKey: connection.posthog_api_key,
     projectToken: connection.posthog_project_token,
     projectId: connection.posthog_project_id,
-    host: connection.posthog_host,
+    host: connection.posthog_host.replace(/\/$/, ""),
   };
 }

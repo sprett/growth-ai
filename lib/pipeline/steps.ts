@@ -285,13 +285,14 @@ export async function createFlag(
   }
 
   const flagKey = `growth-agent-${experimentId.slice(0, 8)}-cycle-${cycleNumber}`;
+  const supabase = createAdminSupabase();
 
   const res = await fetch(
     `${posthog.host}/api/projects/${posthog.projectId}/feature_flags/`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${posthog.apiKey}`,
+        Authorization: `Bearer ${posthog.apiKey}`, // personal API key for management
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -313,13 +314,20 @@ export async function createFlag(
 
   if (!res.ok) {
     const body = await res.text();
+    // If flag already exists, treat it as success and continue
+    if (res.status === 400 && body.includes("unique")) {
+      await supabase
+        .from("variants")
+        .update({ posthog_flag_key: flagKey })
+        .eq("experiment_id", experimentId);
+      return { step: "create_flag", ok: true, message: `Flag already exists, reusing: ${flagKey}` };
+    }
     return { step: "create_flag", ok: false, message: `PostHog error: ${body}` };
   }
 
   const flag = await res.json();
 
   // Store flag key on both variant rows
-  const supabase = createAdminSupabase();
   await supabase
     .from("variants")
     .update({ posthog_flag_key: flagKey })
