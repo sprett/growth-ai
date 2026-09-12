@@ -264,14 +264,6 @@ export function ExperimentChat({
 
     setError(null);
     setPending(true);
-
-    const userTurn: UserTurn = {
-      kind: "user",
-      id: crypto.randomUUID(),
-      text: prompt,
-      images: previews,
-    };
-    setTurns((current) => [...current, userTurn]);
     setDraft("");
     setFiles([]);
     setPreviews([]);
@@ -287,17 +279,15 @@ export function ExperimentChat({
       return;
     }
 
-    const runTurn: RunTurn = {
-      kind: "run",
-      id: crypto.randomUUID(),
-      experimentId: result.experimentId,
-      steps: [{ step: "parse_request", status: "revealing", message: "Working…" }],
-      giveUpMessage: null,
-    };
-    setTurns((current) => [...current, runTurn]);
-    setActivePolls((current) => [...current, result.experimentId]);
+    // Every prompt starts its own experiment (its own hypothesis, PR, and
+    // flag) — it is never a continuation of whatever chat happened to be
+    // open. Navigating to it (rather than appending to the currently
+    // rendered turns) is what actually switches the view AND the sidebar's
+    // highlighted item to the new chat; without this, sending a message
+    // while viewing an older chat silently created a new experiment that
+    // only showed up as a second, confusing sidebar entry.
+    router.push(`/?experiment=${result.experimentId}`);
     setPending(false);
-    router.refresh();
   }
 
   return (
