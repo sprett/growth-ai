@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-paper: #efe6d4;
+  --color-paper-dark: #e4d8c0;
+  --color-ink: #1a1612;
+  --color-rule: #2a241c;
+  --color-mute: #6b6256;
+  --color-ticket: #f7f1e4;
+
+  --font-display: var(--font-syne), ui-sans-serif, sans-serif;
+  --font-body: var(--font-literata), Georgia, serif;
+  --font-mono: var(--font-plex), ui-monospace, monospace;
+
+  --shadow-stamp: 6px 6px 0 rgb(26 22 18 / 0.08);
+  --shadow-cta: 3px 3px 0 var(--color-ink);
+  --shadow-cta-hover: 4px 4px 0 var(--color-ink);
+  --shadow-cta-active: 1px 1px 0 var(--color-ink);
+}
+
+@utility bg-ledger {
+  background-color: var(--color-paper);
+  background-image:
+    radial-gradient(1200px 600px at 10% -10%, #f7f0e2 0%, transparent 50%),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 27px,
+      rgb(26 22 18 / 0.04) 28px
+    );
+}
+
+@layer base {
+  html {
+    @apply h-full;
+  }
+
+  body {
+    @apply min-h-full bg-ledger font-body text-ink antialiased;
+  }
+
+  a {
+    @apply text-inherit;
+  }
+}

@@ -6,7 +6,18 @@ Spec: [`docs/growth-agent-spec.md`](docs/growth-agent-spec.md)
 
 ## Status
 
-Repo is set up. App scaffolding is next (toy landing page + pipeline stubs + Supabase schema).
+Next.js shell is in. Toy landing (`/`) has isolated CTA knobs in `lib/experiment.ts`. Operator dashboard is a stub at `/operator`.
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Then run PostHog’s installer from this repo root so it can detect Next.js:
+
+```bash
+npx @posthog/wizard@latest
+```
 
 ## Clone
 
