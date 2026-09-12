@@ -21,8 +21,8 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Foldline",
-  description: "Toy landing page for the growth-agent A/B loop.",
+  title: "Growth agent",
+  description: "Operator dashboard for the autonomous A/B testing loop.",
 };
 
 export default function RootLayout({

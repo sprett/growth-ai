@@ -1,120 +1,100 @@
-import { CtaButton } from "@/components/cta-button";
-import { CTA_PLACEMENT, HEADLINE, type CtaPlacement } from "@/lib/experiment";
+import { GithubMark, PosthogMark } from "@/components/brand-icon";
+import { StudioHeader, Ticket } from "@/components/studio-header";
 import {
-  ClipboardList,
-  Gauge,
-  ListOrdered,
-  Ticket,
-  WifiOff,
-  type LucideIcon,
-} from "lucide-react";
+  isOnboarded,
+  toPublicConnection,
+  type ConnectionRow,
+} from "@/lib/onboarding";
+import { createServerSupabase } from "@/lib/supabase/server";
+import { MessageSquareText } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
 
-const points: { icon: LucideIcon; text: string }[] = [
-  {
-    icon: ClipboardList,
-    text: "Tear-off stubs with a carbon copy underneath",
-  },
-  {
-    icon: ListOrdered,
-    text: "One queue, numbered in the order people arrived",
-  },
-  {
-    icon: WifiOff,
-    text: "Works when the wifi doesn't",
-  },
-];
-
-function ctaSlots(placement: CtaPlacement): {
-  header: ReactNode;
-  sidebar: ReactNode;
-} {
-  const cta = <CtaButton />;
-
-  switch (placement) {
-    case "header":
-      return { header: cta, sidebar: null };
-    case "sidebar":
-      return { header: null, sidebar: cta };
-    default: {
-      const _exhaustive: never = placement;
-      throw new Error(`Unhandled CTA placement: ${_exhaustive}`);
-    }
+export default async function DashboardPage() {
+  const supabase = await createServerSupabase();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) {
+    redirect("/login");
   }
-}
 
-export default function Home() {
-  const { header, sidebar } = ctaSlots(CTA_PLACEMENT);
+  const { data } = await supabase
+    .from("connections")
+    .select(
+      "github_installation_id, github_repo_full_name, posthog_api_key, posthog_project_id, posthog_host",
+    )
+    .eq("org_id", userData.user.id)
+    .maybeSingle();
+
+  const connection = toPublicConnection(data as ConnectionRow | null);
+  if (!isOnboarded(connection)) {
+    redirect("/onboarding");
+  }
+
+  const repo = connection?.github_repo_full_name ?? "repo pending";
+  const project = connection?.posthog_project_id ?? "";
+  const cloud = connection?.posthog_host?.includes("eu") ? "EU" : "US";
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-[980px] flex-col gap-9 px-6 py-7">
-      <header className="flex flex-wrap items-center gap-5 border-b-2 border-rule pb-4">
-        <div className="flex items-center gap-3">
-          <span className="grid size-9 place-items-center border-2 border-ink font-display text-[13px] font-extrabold tracking-[0.12em]">
-            FL
-          </span>
-          <span className="font-display text-[28px] font-bold tracking-tight">
-            Foldline
-          </span>
-        </div>
-        <p className="m-0 font-mono text-xs tracking-wide text-mute md:ml-auto">
-          Vol. 01 · Shop edition
+    <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-6 py-10">
+      <StudioHeader subtitle={repo} />
+
+      <header className="mb-8">
+        <h1 className="m-0 font-display text-[2.6rem] leading-[0.95] font-extrabold tracking-tight">
+          Dashboard
+        </h1>
+        <p className="mt-3 mb-0 text-lg leading-relaxed">
+          GitHub and PostHog are wired. The chat studio — describe an
+          experiment, get a PR and a flag — is next.
         </p>
-        {header}
       </header>
 
-      <div className="grid flex-1 grid-cols-1 items-start gap-10 md:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.7fr)]">
-        <main>
-          <p className="m-0 font-mono text-xs tracking-[0.16em] text-mute uppercase">
-            For counters, not dashboards
-          </p>
-          <h1 className="mt-2 mb-4.5 font-display text-[clamp(2.2rem,5vw,3.6rem)] leading-[0.95] font-extrabold tracking-tight">
-            {HEADLINE}
-          </h1>
-          <p className="mb-5.5 max-w-xl text-lg leading-relaxed">
-            Foldline is a paper-first waitlist for bakeries, bike shops, and
-            anywhere a clipboard still beats an iPad. Tickets stay in order.
-            Names don&apos;t walk off.
-          </p>
-          <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
-            {points.map((point) => (
-              <li key={point.text} className="flex items-start gap-2.5">
-                <point.icon
-                  className="mt-0.5 size-4 shrink-0 text-mute"
-                  strokeWidth={1.75}
-                />
-                <span>{point.text}</span>
-              </li>
-            ))}
-          </ul>
-        </main>
-
-        <aside className="flex flex-col gap-3.5 border border-dashed border-rule bg-ticket p-5.5 shadow-stamp">
-          <p className="m-0 flex items-center gap-2 font-mono text-[11px] tracking-[0.18em] uppercase">
-            <Ticket className="size-3.5" strokeWidth={1.75} />
-            Ticket 0147
-          </p>
-          <p className="m-0 leading-relaxed">
-            Leave a name. We&apos;ll send a note when the first run of books
-            ships — no drip campaign, one letter.
-          </p>
-          {sidebar}
-          {sidebar ? null : (
-            <p className="m-0 font-mono text-[11px] text-mute">
-              The join button lives in the masthead.
+      <div className="mb-4 grid gap-4 sm:grid-cols-2">
+        <Ticket className="flex items-center gap-3 p-4">
+          <span className="grid size-10 place-items-center bg-ink text-ticket">
+            <GithubMark className="size-5" />
+          </span>
+          <div className="min-w-0">
+            <p className="m-0 font-mono text-[10px] tracking-[0.16em] text-mute uppercase">
+              GitHub
             </p>
-          )}
-        </aside>
+            <p className="m-0 truncate font-display text-lg font-bold">{repo}</p>
+          </div>
+        </Ticket>
+        <Ticket className="rise-delay flex items-center gap-3 p-4">
+          <PosthogMark className="size-10 shrink-0" />
+          <div className="min-w-0">
+            <p className="m-0 font-mono text-[10px] tracking-[0.16em] text-mute uppercase">
+              PostHog · {cloud}
+            </p>
+            <p className="m-0 truncate font-display text-lg font-bold">
+              Project {project}
+            </p>
+          </div>
+        </Ticket>
       </div>
 
-      <footer className="flex justify-between gap-4 border-t border-ink/20 pt-3.5 font-mono text-[11px] text-mute">
-        <span>Foldline · a toy landing page for A/B experiments</span>
-        <Link href="/operator" className="inline-flex items-center gap-1.5">
-          <Gauge className="size-3" strokeWidth={1.75} />
-          Operator
+      <Ticket className="rise-delay-2 flex flex-col items-start gap-4 p-6 sm:p-8">
+        <span className="grid size-11 place-items-center border border-rule">
+          <MessageSquareText className="size-5" strokeWidth={1.6} />
+        </span>
+        <div>
+          <h2 className="m-0 font-display text-2xl font-bold tracking-tight">
+            Chat comes next
+          </h2>
+          <p className="mt-2 mb-0 leading-relaxed text-mute">
+            You&apos;ll type a hypothesis in plain language. The agent will
+            open a PR on {repo} and write a feature flag in this PostHog
+            project. We only store variant counts — never visitor-level
+            events.
+          </p>
+        </div>
+        <Link
+          href="/operator"
+          className="font-mono text-[11px] tracking-[0.12em] text-mute uppercase underline-offset-4 hover:underline"
+        >
+          Peek at the pipeline →
         </Link>
-      </footer>
+      </Ticket>
     </div>
   );
 }

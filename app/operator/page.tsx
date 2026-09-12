@@ -1,4 +1,4 @@
-import { createSupabase } from "@/lib/supabase";
+import { createServerSupabase } from "@/lib/supabase/server";
 import {
   Activity,
   ArrowLeft,
@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 const steps: { label: string; icon: LucideIcon }[] = [
   { label: "Parse request", icon: MessageSquareText },
@@ -32,61 +33,56 @@ type ExperimentRow = {
   cycle_number: number | null;
 };
 
-export default async function OperatorPage() {
-  const supabase = createSupabase();
-  const { data: experiments, error } = supabase
-    ? await supabase
-        .from("experiments")
-        .select("id, name, prompt_text, status, cycle_number")
-        .order("created_at", { ascending: false })
-    : { data: null, error: { message: "Supabase env is missing" } };
+export default async function PipelinePage() {
+  const supabase = await createServerSupabase();
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) {
+    redirect("/login");
+  }
 
-  const rows = (experiments ?? []) as ExperimentRow[];
+  const { data, error } = await supabase
+    .from("experiments")
+    .select("id, name, prompt_text, status, cycle_number")
+    .eq("org_id", userData.user.id)
+    .order("created_at", { ascending: false });
+
+  const experiments = (data ?? []) as ExperimentRow[];
 
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-7 px-6 py-9 pb-16">
       <header>
         <p className="m-0 font-mono text-xs tracking-[0.16em] text-mute uppercase">
-          Growth agent
+          Pipeline
         </p>
         <h1 className="mt-1.5 mb-2.5 font-display text-[2.6rem] tracking-tight">
-          Operator
+          Steps
         </h1>
-        <p className="m-0 max-w-xl text-lg leading-relaxed">
-          Live experiment rows from Supabase. Pipeline steps are still stubs.
+        <p className="m-0 text-lg leading-relaxed">
+          Experiments for your account. The loop still runs as stubs.
         </p>
       </header>
 
-      <section className="flex flex-col gap-3">
-        <p className="m-0 font-mono text-xs tracking-[0.16em] text-mute uppercase">
-          Experiments
-        </p>
-        {error ? (
-          <p className="m-0 font-mono text-sm text-mute">{error.message}</p>
-        ) : rows.length === 0 ? (
-          <p className="m-0 text-mute">No experiments yet.</p>
-        ) : (
-          <ul className="m-0 list-none border-t border-ink/20 p-0">
-            {rows.map((experiment) => (
-              <li
-                key={experiment.id}
-                className="flex flex-col gap-1 border-b border-ink/15 py-3"
-              >
-                <span className="font-display text-lg tracking-tight">
-                  {experiment.name ?? "Untitled"}
-                </span>
-                <span className="text-sm leading-relaxed">
-                  {experiment.prompt_text ?? "No prompt"}
-                </span>
-                <span className="font-mono text-[11px] text-mute">
-                  cycle {experiment.cycle_number ?? 1} ·{" "}
-                  {experiment.status ?? "idle"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {error ? (
+        <p className="m-0 font-mono text-sm text-mute">{error.message}</p>
+      ) : experiments.length === 0 ? (
+        <p className="m-0 text-mute">No experiments yet. Chat lands on the dashboard next.</p>
+      ) : (
+        <ul className="m-0 list-none border-t border-ink/20 p-0">
+          {experiments.map((experiment) => (
+            <li
+              key={experiment.id}
+              className="flex flex-col gap-1 border-b border-ink/15 py-3"
+            >
+              <span className="font-display text-lg tracking-tight">
+                {experiment.name ?? "Untitled"}
+              </span>
+              <span className="font-mono text-[11px] text-mute">
+                cycle {experiment.cycle_number ?? 1} · {experiment.status}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <ol className="m-0 list-none border-t border-ink/20 p-0">
         {steps.map((step, index) => (
@@ -99,17 +95,15 @@ export default async function OperatorPage() {
             </span>
             <step.icon className="size-4 text-mute" strokeWidth={1.75} />
             <span>{step.label}</span>
-            <span className="font-mono text-xs text-mute">idle</span>
+            <span className="font-mono text-xs text-mute">stub</span>
           </li>
         ))}
       </ol>
 
-      <p className="m-0 border-t border-ink/20 pt-3.5 font-mono text-[11px] text-mute">
-        <Link href="/" className="inline-flex items-center gap-1.5">
-          <ArrowLeft className="size-3" strokeWidth={1.75} />
-          Foldline landing
-        </Link>
-      </p>
+      <Link href="/" className="inline-flex items-center gap-1.5 font-mono text-[11px] text-mute">
+        <ArrowLeft className="size-3" strokeWidth={1.75} />
+        Studio
+      </Link>
     </div>
   );
 }

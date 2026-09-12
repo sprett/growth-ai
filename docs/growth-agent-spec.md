@@ -16,9 +16,10 @@
 
 - No real user traffic. Traffic is simulated — say so plainly in the demo, don't hide it.
 - No statistical significance testing (t-tests, confidence intervals). Simple metric comparison per element is enough.
-- No support for arbitrary websites — the "target" is a small toy app you control.
+- No support for arbitrary websites — the "target" is a small demo site you control, living in its own separate repo (see Section 4).
 - No auto-merge. A human merges each PR (keeps the demo safe and gives a natural pause point to narrate).
 - No general-purpose code generation — scope the tunable dimensions in advance (copy, color, placement of 1–2 specific elements) so diff generation is fast and reliable.
+- Only one real tenant — but resolved through the actual `connections` table lookup (Section 5), seeded with a single row, not hardcoded as constants in the pipeline. Real self-serve onboarding (a UI for a *new* tenant to add their own row) is out of scope for the build — see Section 11.
 
 ## 3. Architecture overview
 
@@ -71,11 +72,13 @@
 There's still one real graph in this project, and it's the important one for the demo:
 - **The playbook** is a simple knowledge graph (Postgres/Supabase rows) — nodes are "element + value that won," edges are "similar context to" or "combined into." This is what visibly grows on screen, and it's just data — no framework involved.
 
+**Every step above resolves its GitHub and PostHog credentials by looking up the active tenant's row in `connections` (Section 5) — never a constant baked into the code.** For the demo there's exactly one row, pointing at a separate fake-customer repo (Section 4), but the pipeline itself can't tell the difference between that and a real signup. That's the whole point: nothing changes when a second real tenant shows up later.
+
 ## 4. Components & ownership
 
 | Component | Owner | Notes |
 |---|---|---|
-| Toy demo webapp (2–3 tunable elements) | Frontend | Simple landing page: CTA button (copy/color/placement), maybe a headline variant |
+| Fake-customer repo (2–3 tunable elements) | Frontend | **Separate repo from the pipeline itself** — its own GitHub App installation, its own PostHog project. Simple landing page: CTA button (copy/color/placement), maybe a headline variant. Stands in for a real external customer so nothing in the pipeline gets to assume "us" |
 | Synthetic traffic simulator | Backend | A script firing `$feature_flag_called` + custom click events at a fast interval |
 | PostHog integration | Backend | `POST /api/projects/{id}/feature_flags/` to create the flag; events API to pull results |
 | GitHub integration | Backend (reuse relay's Octokit/GitHub App code) | Open PR with generated diff, webhook on merge |
@@ -87,9 +90,19 @@ There's still one real graph in this project, and it's the important one for the
 
 ## 5. Data model (Supabase / Postgres)
 
+**Every table below gets an `org_id` column, with Supabase Row-Level Security policies enforcing that a tenant can only ever query its own rows.** Don't rely on application-level filtering alone for this.
+
+**Data minimization rule: no personal or user-level data is ever persisted here.** `events` stores aggregate counts, never per-user rows; `playbook_nodes` stores abstracted lessons (element/value/win-rate), never anything identifying an end user. Raw responses from a customer's own PostHog project are used transiently during the analysis step and discarded — only the distilled conclusion gets written.
+
 ```sql
+connections (
+  id, org_id,
+  github_installation_id, github_repo_full_name,
+  posthog_api_key, posthog_project_id, posthog_host   -- e.g. us.posthog.com
+)
+
 experiments (
-  id, prompt_text, created_at, status
+  id, org_id, prompt_text, created_at, status
 )
 
 variants (
@@ -100,11 +113,11 @@ variants (
 
 events (
   id, variant_id, event_type,      -- 'view' | 'click_element_x' | 'convert'
-  count, recorded_at
+  count, recorded_at               -- aggregate counts only, never per-user rows
 )
 
 playbook_nodes (
-  id, element, dimension, value, context_tag, win_rate, created_at
+  id, org_id, element, dimension, value, context_tag, win_rate, created_at
 )
 
 playbook_edges (
@@ -112,19 +125,23 @@ playbook_edges (
 )
 ```
 
+For the hackathon, `connections` has exactly one row — pointing at the fake-customer repo and its own PostHog project. You insert it by hand once during setup; nothing in the pipeline code should ever reference a repo name or API key directly.
+
 ## 6. Integration notes
 
-- **PostHog**: use a personal API key, `POST /api/projects/{project_id}/feature_flags/` to create a multivariate flag with variant keys matching your `variants` table. Capture events via the standard event endpoint with `$feature_flag` / `$feature_flag_response` properties so you can slice by variant. Don't rely on PostHog's built-in "Experiment" object or its significance engine — do your own simple per-element comparison off the raw events; it's faster to build and you control the logic that feeds the playbook.
-- **GitHub**: reuse the GitHub App + Octokit setup from relay. Scope the diff generation to the 2–3 known tunable elements so the LLM's code-gen is narrow and reliable, not open-ended.
+- **PostHog**: look up the API key, project ID, and host from the tenant's `connections` row (for the demo, the fake-customer repo's own PostHog project — not the team's). `POST /api/projects/{project_id}/feature_flags/` to create a multivariate flag with variant keys matching your `variants` table. Capture events via the standard event endpoint with `$feature_flag` / `$feature_flag_response` properties so you can slice by variant. Don't rely on PostHog's built-in "Experiment" object or its significance engine — do your own simple per-element comparison off the raw events; it's faster to build and you control the logic that feeds the playbook.
+- **GitHub**: reuse the GitHub App + Octokit setup from relay, but install it on the fake-customer repo, not your own — resolve `github_installation_id` and `github_repo_full_name` from `connections`, never a constant. Scope the diff generation to the 2–3 known tunable elements so the LLM's code-gen is narrow and reliable, not open-ended.
 - **Orchestration**: no framework needed. Each step is a plain function; the `experiments` row carries `cycle_number`, `active_hypothesis`, and `status` so any step can pick up where the last one left off. Pass relevant playbook nodes into the "synthesize next hypothesis" step explicitly so it reasons over real prior learnings, not just the current cycle's data.
 
 ## 7. Build order (8 hours, 2 engineers)
 
+**Before the clock starts, if your hackathon's rules allow account/repo setup ahead of time:** create the fake-customer repo, install the GitHub App on it, spin up a separate PostHog project for it, and hand-insert the one `connections` row. If pre-work isn't allowed, this is the first 30 minutes of hour one instead.
+
 | Time | Backend | Frontend |
 |---|---|---|
-| 0–1h | Scaffold pipeline steps (stub logic), Supabase schema | Scaffold toy webapp with 2–3 tunable elements |
-| 1–3h | PostHog flag creation + event capture working end-to-end | GitHub PR diff viewer + basic dashboard shell |
-| 3–5h | GitHub PR generation + merge webhook → flag creation trigger | Synthetic traffic control panel; live metrics view |
+| 0–1h | Scaffold pipeline steps (stub logic) reading from `connections`; Supabase schema | Scaffold fake-customer repo with 2–3 tunable elements |
+| 1–3h | PostHog flag creation + event capture working end-to-end (against the fake-customer project) | GitHub PR diff viewer + basic dashboard shell |
+| 3–5h | GitHub PR generation + merge webhook → flag creation trigger (against the fake-customer repo) | Synthetic traffic control panel; live metrics view |
 | 5–6.5h | Analyze-results node + playbook write logic | Live learnings graph (vis-network/Cytoscape) wired to Supabase Realtime |
 | 6.5–7.5h | Synthesize-next-hypothesis step; second full loop working | Polish: cycle counter, status labels, styling pass |
 | 7.5–8h | Joint: dry-run the full demo twice, fix the obvious break | Joint: same |
@@ -149,3 +166,24 @@ playbook_edges (
 
 - Similarity matching (pgvector) so a new experiment's context can pull relevant learnings from a *different* past experiment, not just its own history.
 - A small static diagram of the pipeline itself (like the one in Section 3) shown alongside the playbook graph — "the steps it follows" vs. "what it's learned."
+
+## 11. Beyond the hackathon: real self-serve onboarding
+
+Not part of the 8-hour build — for reference if this continues past the demo.
+
+The `connections` table and the tenant-lookup pattern are already built (Section 5) — that was the whole point of standing up a separate fake-customer repo instead of hardcoding your own. What's still missing for a real product is *self-serve onboarding*: a UI where a new customer creates their own row instead of you inserting it by hand.
+
+- **GitHub**: already solved by the GitHub App model (reused from relay) — a customer installs the app on their own repo through GitHub's normal install flow, which gives you an installation ID to store. No new architecture needed, just a "Connect GitHub" button that kicks off that flow.
+- **PostHog**: two options, increasing in effort —
+  1. **Personal API key paste-in.** User creates a personal API key in their own PostHog account settings and enters it, their project ID, and their region/host (US cloud, EU cloud, or self-hosted) into an onboarding form. Simple, standard pattern, no approval process.
+  2. **Real OAuth.** PostHog supports OAuth 2.0 via a Client ID Metadata Document — you host a small JSON file describing your app on a domain you control, and PostHog fetches it during the authorization flow. No pre-registration or approval needed from PostHog to get started, which makes a proper "Connect your PostHog account" button realistic without waiting on anyone.
+
+Either path just writes a new row to `connections` — the pipeline itself doesn't change at all.
+
+### Privacy and multi-tenant data handling
+
+Two separate rules, not one:
+
+- **Tenant isolation**: every table carries `org_id`, enforced with Supabase Row-Level Security policies — don't rely on application code alone to filter correctly.
+- **Data minimization**: never copy a customer's raw, user-level analytics data (anything tied to a real visitor/distinct_id) into your own database. Query their PostHog live for aggregate counts per analysis cycle, compute the comparison, and persist only the distilled conclusion (element, value, win rate, context). The raw API response is used transiently and discarded — this keeps you out of the business of processing someone else's customers' personal data.
+- **Cross-org learnings are a separate, deliberate feature, not a side effect.** A playbook that generalizes across customers ("this pattern wins broadly, not just for one org") is genuinely valuable, but it must be built as explicit, anonymized, opt-in aggregation — never as an accidental join across tenants "for convenience."

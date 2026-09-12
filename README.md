@@ -1,46 +1,31 @@
 # Growth AI
 
-Hackathon build: you describe a UI experiment in plain language. The agent writes a variant, opens a real GitHub PR, creates a real PostHog feature flag, simulates traffic, learns which elements won, and opens the *next* PR itself.
+Operator + pipeline. Users sign in, connect a GitHub repo and PostHog project, then describe experiments in chat.
 
 Spec: [`docs/growth-agent-spec.md`](docs/growth-agent-spec.md)
 
-## Status
-
-Next.js shell is in. Toy landing (`/`) has isolated CTA knobs in `lib/experiment.ts`. Operator dashboard is a stub at `/operator`.
+## Run
 
 ```bash
+nvm use
 pnpm install
 pnpm dev
 ```
 
-Then run PostHog’s installer from this repo root so it can detect Next.js:
+Open [http://localhost:3000](http://localhost:3000). **Continue with GitHub** is the main path.
 
-```bash
-npx @posthog/wizard@latest
-```
+### GitHub login (one-time dashboard setup)
 
-## Clone
+This uses **Supabase Auth’s GitHub provider**, not our `.env`. Paste the Client ID and Client Secret only in Supabase — don’t commit them.
 
-```bash
-git clone https://github.com/sprett/growth-ai.git
-```
+1. On the GitHub App: **Callback URL** must be  
+   `https://fxltxeyrzspjbpkugjqu.supabase.co/auth/v1/callback`  
+   Generate a **client secret** if you only have the Client ID so far.
+2. [Supabase → Authentication → Providers → GitHub](https://supabase.com/dashboard/project/fxltxeyrzspjbpkugjqu/auth/providers): enable it, paste Client ID + secret.
+3. [URL configuration](https://supabase.com/dashboard/project/fxltxeyrzspjbpkugjqu/auth/url-configuration): Site URL `http://localhost:3000`, redirect allow list must include `http://localhost:3000/auth/callback`.
 
-If you need write access and cannot push, ask to be added as a collaborator.
+Set `NEXT_PUBLIC_GITHUB_APP_SLUG` to the app slug (e.g. `hackathon-agentic-app`, not the full `github.com/apps/...` URL) for the *install on a repo* onboarding step (separate from login).
 
-## Accounts to create before hour 1
+PostHog is the personal-API-key paste-in from the spec (Section 11).
 
-Both people can share one project per service. Put keys in `.env.local` (copy from `.env.example`). Never commit real keys.
-
-| Service | Who needs an account | What to copy into `.env` | Free tier OK? |
-|---|---|---|---|
-| [GitHub](https://github.com) | Both (already on this repo) | Fine-grained PAT: Contents + Pull requests (write) on `sprett/growth-ai` | Yes |
-| [PostHog Cloud](https://app.posthog.com/signup) | One shared project | Personal API key + project ID | Yes |
-| [Supabase](https://supabase.com/dashboard) | One shared project | Project URL, anon key, service role key | Yes |
-| OpenAI **or** Anthropic | One shared key | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` | Paid usage, small |
-
-Skip for v1: a GitHub App (relay has one — a PAT is enough for the demo), pgvector, ngrok (only needed when the merge webhook must hit your laptop).
-
-## Split (from the spec)
-
-- **Frontend:** toy landing page (CTA copy / color / placement), dashboard, PR diff viewer, learnings graph
-- **Backend:** pipeline steps, PostHog flags + events, GitHub PRs + merge webhook, Supabase playbook
+The fake-customer landing page is a **separate repo**.

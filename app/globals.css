@@ -30,6 +30,53 @@
     );
 }
 
+@layer components {
+  .ticket {
+    position: relative;
+    background-color: var(--color-ticket);
+    border: 1px solid rgb(42 36 28 / 0.16);
+    box-shadow: var(--shadow-stamp);
+    padding: 1.75rem 1.5rem 1.5rem;
+  }
+
+  .ticket::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 12px;
+    background-image: radial-gradient(
+      circle at 8px 0,
+      var(--color-paper) 5px,
+      transparent 5.5px
+    );
+    background-size: 16px 12px;
+    background-repeat: repeat-x;
+  }
+
+  .rise {
+    animation: rise 0.55s ease both;
+  }
+
+  .rise-delay {
+    animation: rise 0.55s ease 90ms both;
+  }
+
+  .rise-delay-2 {
+    animation: rise 0.55s ease 180ms both;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @layer base {
   html {
     @apply h-full;
