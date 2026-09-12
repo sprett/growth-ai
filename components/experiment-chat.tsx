@@ -43,6 +43,29 @@ type UserTurn = {
 
 type Turn = UserTurn | RunTurn;
 
+export type InitialExperiment = {
+  id: string;
+  promptText: string;
+  progress: ExperimentProgress;
+};
+
+function buildInitialTurns(initialExperiment: InitialExperiment): Turn[] {
+  const userTurn: UserTurn = {
+    kind: "user",
+    id: `${initialExperiment.id}-prompt`,
+    text: initialExperiment.promptText,
+    images: [],
+  };
+  const runTurn: RunTurn = {
+    kind: "run",
+    id: `${initialExperiment.id}-run`,
+    experimentId: initialExperiment.id,
+    steps: computeStepCards(initialExperiment.progress),
+    giveUpMessage: null,
+  };
+  return [userTurn, runTurn];
+}
+
 function stepMessage(step: PipelineStepName, status: StepCardStatus, progress: ExperimentProgress): string {
   if (status === "pending") {
     return "";
@@ -114,16 +137,26 @@ function computeStepCards(progress: ExperimentProgress): StepCard[] {
   }).filter((card) => card.status !== "pending");
 }
 
-export function ExperimentChat() {
+export function ExperimentChat({
+  initialExperiment = null,
+}: {
+  initialExperiment?: InitialExperiment | null;
+}) {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<Turn[]>(() =>
+    initialExperiment ? buildInitialTurns(initialExperiment) : [],
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activePolls, setActivePolls] = useState<string[]>([]);
+  const [activePolls, setActivePolls] = useState<string[]>(() =>
+    initialExperiment && !TERMINAL_STATUSES.has(initialExperiment.progress.status ?? "")
+      ? [initialExperiment.id]
+      : [],
+  );
   const activePollsRef = useRef<string[]>([]);
   const pollStateRef = useRef<Map<string, { attempts: number; consecutiveErrors: number }>>(new Map());
 
@@ -268,8 +301,8 @@ export function ExperimentChat() {
   }
 
   return (
-    <div className="flex min-h-[70vh] flex-col">
-      <div className="flex flex-1 flex-col gap-3 pb-4">
+    <div className="flex h-full flex-col">
+      <div className="flex flex-1 flex-col gap-3 overflow-y-auto pt-6 pb-4">
         {turns.length === 0 ? (
           <div className="flex flex-1 flex-col justify-end gap-3">
             <p className="m-0 font-mono text-[11px] tracking-[0.16em] text-mute uppercase">
